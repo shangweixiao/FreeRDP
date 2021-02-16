@@ -62,6 +62,7 @@ static BOOL wl_begin_paint(rdpContext* context)
 
 static BOOL wl_update_buffer(wlfContext* context_w, INT32 ix, INT32 iy, INT32 iw, INT32 ih)
 {
+	BOOL res = FALSE;
 	rdpGdi* gdi;
 	char* data;
 	UINT32 x, y, w, h;
@@ -76,6 +77,7 @@ static BOOL wl_update_buffer(wlfContext* context_w, INT32 ix, INT32 iy, INT32 iw
 	if ((ix < 0) || (iy < 0) || (iw < 0) || (ih < 0))
 		return FALSE;
 
+	EnterCriticalSection(&context_w->critical);
 	x = (UINT32)ix;
 	y = (UINT32)iy;
 	w = (UINT32)iw;
@@ -84,16 +86,19 @@ static BOOL wl_update_buffer(wlfContext* context_w, INT32 ix, INT32 iy, INT32 iw
 	data = UwacWindowGetDrawingBuffer(context_w->window);
 
 	if (!data || (rc != UWAC_SUCCESS))
-		return FALSE;
+		goto fail;
 
 	gdi = context_w->context.gdi;
 
 	if (!gdi)
-		return FALSE;
+		goto fail;
 
 	/* Ignore output if the surface size does not match. */
 	if (((INT64)x > geometry.width) || ((INT64)y > geometry.height))
-		return TRUE;
+	{
+		res = TRUE;
+		goto fail;
+	}
 
 	area.left = x;
 	area.top = y;
@@ -103,21 +108,24 @@ static BOOL wl_update_buffer(wlfContext* context_w, INT32 ix, INT32 iy, INT32 iw
 	if (!wlf_copy_image(gdi->primary_buffer, gdi->stride, gdi->width, gdi->height, data, stride,
 	                    geometry.width, geometry.height, &area,
 	                    context_w->context.settings->SmartSizing))
-		return FALSE;
+		goto fail;
 
 	if (!wlf_scale_coordinates(&context_w->context, &x, &y, FALSE))
-		return FALSE;
+		goto fail;
 
 	if (!wlf_scale_coordinates(&context_w->context, &w, &h, FALSE))
-		return FALSE;
+		goto fail;
 
 	if (UwacWindowAddDamage(context_w->window, x, y, w, h) != UWAC_SUCCESS)
-		return FALSE;
+		goto fail;
 
 	if (UwacWindowSubmitBuffer(context_w->window, false) != UWAC_SUCCESS)
-		return FALSE;
+		goto fail;
 
-	return TRUE;
+	res = TRUE;
+fail:
+	LeaveCriticalSection(&context_w->critical);
+	return res;
 }
 
 static BOOL wl_end_paint(rdpContext* context)
@@ -170,7 +178,7 @@ static BOOL wl_pre_connect(freerdp* instance)
 {
 	rdpSettings* settings;
 	wlfContext* context;
-	UwacOutput* output;
+	const UwacOutput* output;
 	UwacSize resolution;
 
 	if (!instance)
@@ -191,9 +199,9 @@ static BOOL wl_pre_connect(freerdp* instance)
 	if (settings->Fullscreen)
 	{
 		// Use the resolution of the first display output
-		output = UwacDisplayGetOutput(context->display, 1);
+		output = UwacDisplayGetOutput(context->display, 0);
 
-		if (output != NULL && UwacOutputGetResolution(output, &resolution) == UWAC_SUCCESS)
+		if ((output != NULL) && (UwacOutputGetResolution(output, &resolution) == UWAC_SUCCESS))
 		{
 			settings->DesktopWidth = (UINT32)resolution.width;
 			settings->DesktopHeight = (UINT32)resolution.height;
@@ -216,6 +224,7 @@ static BOOL wl_post_connect(freerdp* instance)
 	UwacWindow* window;
 	wlfContext* context;
 	rdpSettings* settings;
+	char* title = "FreeRDP";
 	UINT32 w, h;
 
 	if (!instance || !instance->context)
@@ -223,6 +232,9 @@ static BOOL wl_post_connect(freerdp* instance)
 
 	context = (wlfContext*)instance->context;
 	settings = instance->context->settings;
+
+	if (settings->WindowTitle)
+		title = settings->WindowTitle;
 
 	if (!gdi_init(instance, PIXEL_FORMAT_BGRA32))
 		return FALSE;
@@ -253,12 +265,13 @@ static BOOL wl_post_connect(freerdp* instance)
 		return FALSE;
 
 	UwacWindowSetFullscreenState(window, NULL, instance->context->settings->Fullscreen);
-	UwacWindowSetTitle(window, "FreeRDP");
+	UwacWindowSetTitle(window, title);
 	UwacWindowSetOpaqueRegion(context->window, 0, 0, w, h);
 	instance->update->BeginPaint = wl_begin_paint;
 	instance->update->EndPaint = wl_end_paint;
 	instance->update->DesktopResize = wl_resize_display;
-	freerdp_keyboard_init(instance->context->settings->KeyboardLayout);
+	freerdp_keyboard_init_ex(instance->context->settings->KeyboardLayout,
+	                         instance->context->settings->KeyboardRemappingList);
 
 	if (!(context->disp = wlf_disp_new(context)))
 		return FALSE;
@@ -292,6 +305,7 @@ static void wl_post_disconnect(freerdp* instance)
 
 static BOOL handle_uwac_events(freerdp* instance, UwacDisplay* display)
 {
+	BOOL rc;
 	UwacEvent event;
 	wlfContext* context;
 
@@ -317,9 +331,11 @@ static BOOL handle_uwac_events(freerdp* instance, UwacDisplay* display)
 				break;
 
 			case UWAC_EVENT_FRAME_DONE:
-				if (UwacWindowSubmitBuffer(context->window, false) != UWAC_SUCCESS)
+				EnterCriticalSection(&context->critical);
+				rc = UwacWindowSubmitBuffer(context->window, false);
+				LeaveCriticalSection(&context->critical);
+				if (rc != UWAC_SUCCESS)
 					return FALSE;
-
 				break;
 
 			case UWAC_EVENT_POINTER_ENTER:
@@ -341,6 +357,9 @@ static BOOL handle_uwac_events(freerdp* instance, UwacDisplay* display)
 				break;
 
 			case UWAC_EVENT_POINTER_AXIS:
+				break;
+
+			case UWAC_EVENT_POINTER_AXIS_DISCRETE:
 				if (!wlf_handle_pointer_axis(instance, &event.mouse_axis))
 					return FALSE;
 
@@ -379,6 +398,12 @@ static BOOL handle_uwac_events(freerdp* instance, UwacDisplay* display)
 
 				break;
 
+			case UWAC_EVENT_KEYBOARD_MODIFIERS:
+				if (!wlf_keyboard_modifiers(instance, &event.keyboard_modifiers))
+					return FALSE;
+
+				break;
+
 			case UWAC_EVENT_CONFIGURE:
 				if (!wlf_disp_handle_configure(context->disp, event.configure.width,
 				                               event.configure.height))
@@ -394,6 +419,11 @@ static BOOL handle_uwac_events(freerdp* instance, UwacDisplay* display)
 			case UWAC_EVENT_CLIPBOARD_SELECT:
 				if (!wlf_cliprdr_handle_event(context->clipboard, &event.clipboard))
 					return FALSE;
+
+				break;
+
+			case UWAC_EVENT_CLOSE:
+				context->closed = TRUE;
 
 				break;
 
@@ -467,6 +497,12 @@ static int wlfreerdp_run(freerdp* instance)
 			break;
 		}
 
+		if (context->closed)
+		{
+			WLog_Print(context->log, WLOG_INFO, "Closed from Wayland");
+			break;
+		}
+
 		if (freerdp_check_event_handles(instance->context) != TRUE)
 		{
 			if (client_auto_reconnect_ex(instance, handle_window_events))
@@ -535,6 +571,7 @@ static BOOL wlf_client_new(freerdp* instance, rdpContext* context)
 	instance->GatewayAuthenticate = client_cli_gw_authenticate;
 	instance->VerifyCertificateEx = client_cli_verify_certificate_ex;
 	instance->VerifyChangedCertificateEx = client_cli_verify_changed_certificate_ex;
+	instance->PresentGatewayMessage = client_cli_present_gateway_message;
 	instance->LogonErrorInfo = wlf_logon_error_info;
 	wfl->log = WLog_Get(TAG);
 	wfl->display = UwacOpenDisplay(NULL, &status);
@@ -547,6 +584,8 @@ static BOOL wlf_client_new(freerdp* instance, rdpContext* context)
 
 	if (!wfl->displayHandle)
 		return FALSE;
+
+	InitializeCriticalSection(&wfl->critical);
 
 	return TRUE;
 }
@@ -563,6 +602,7 @@ static void wlf_client_free(freerdp* instance, rdpContext* context)
 
 	if (wlf->displayHandle)
 		CloseHandle(wlf->displayHandle);
+	DeleteCriticalSection(&wlf->critical);
 }
 
 static int wfl_client_start(rdpContext* context)
@@ -598,18 +638,28 @@ int main(int argc, char* argv[])
 	int status;
 	RDP_CLIENT_ENTRY_POINTS clientEntryPoints;
 	rdpContext* context;
+	rdpSettings* settings;
+	wlfContext* wlc;
+
 	RdpClientEntry(&clientEntryPoints);
 	context = freerdp_client_context_new(&clientEntryPoints);
-
 	if (!context)
 		goto fail;
+	wlc = (wlfContext*)context;
+	settings = context->settings;
 
-	status = freerdp_client_settings_parse_command_line(context->settings, argc, argv, FALSE);
-	status =
-	    freerdp_client_settings_command_line_status_print(context->settings, status, argc, argv);
-
+	status = freerdp_client_settings_parse_command_line(settings, argc, argv, FALSE);
 	if (status)
-		return 0;
+	{
+		BOOL list = settings->ListMonitors;
+
+		rc = freerdp_client_settings_command_line_status_print(settings, status, argc, argv);
+
+		if (list)
+			wlf_list_monitors(wlc);
+
+		goto fail;
+	}
 
 	if (freerdp_client_start(context) != 0)
 		goto fail;

@@ -42,6 +42,8 @@ struct wlf_context
 	UwacSeat* seat;
 
 	BOOL fullscreen;
+	BOOL closed;
+	BOOL focusing;
 
 	/* Channels */
 	RdpeiClientContext* rdpei;
@@ -50,6 +52,7 @@ struct wlf_context
 	wfClipboard* clipboard;
 	wlfDispContext* disp;
 	wLog* log;
+	CRITICAL_SECTION critical;
 };
 
 BOOL wlf_scale_coordinates(rdpContext* context, UINT32* px, UINT32* py, BOOL fromLocalToRDP);

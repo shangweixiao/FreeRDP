@@ -25,7 +25,7 @@
 #define TEXT_FORMATS_COUNT 2
 
 /* used for createing a fake format list response, containing only text formats */
-static CLIPRDR_FORMAT g_text_formats[] = { { CF_TEXT, '\0' }, { CF_UNICODETEXT, '\0' } };
+static CLIPRDR_FORMAT g_text_formats[] = { { CF_TEXT, "\0" }, { CF_UNICODETEXT, "\0" } };
 
 BOOL pf_server_cliprdr_init(pServerContext* ps)
 {
@@ -45,6 +45,7 @@ BOOL pf_server_cliprdr_init(pServerContext* ps)
 	cliprdr->streamFileClipEnabled = TRUE;
 	cliprdr->fileClipNoFilePaths = TRUE;
 	cliprdr->canLockClipData = TRUE;
+	cliprdr->hasHugeFileSupport = TRUE;
 
 	/* disable initialization sequence, for caps sync */
 	cliprdr->autoInitializationSequence = FALSE;
@@ -294,7 +295,7 @@ static UINT pf_cliprdr_ServerFormatList(CliprdrClientContext* context,
 
 	if (pdata->config->TextOnly)
 	{
-		CLIPRDR_FORMAT_LIST list;
+		CLIPRDR_FORMAT_LIST list = { 0 };
 		pf_cliprdr_create_text_only_format_list(&list);
 		return server->ServerFormatList(server, &list);
 	}

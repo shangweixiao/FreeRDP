@@ -467,14 +467,17 @@ static DWORD client_cli_accept_certificate(rdpSettings* settings)
 		{
 			case 'y':
 			case 'Y':
+				fgetc(stdin);
 				return 1;
 
 			case 't':
 			case 'T':
+				fgetc(stdin);
 				return 2;
 
 			case 'n':
 			case 'N':
+				fgetc(stdin);
 				return 0;
 
 			default:
@@ -549,6 +552,7 @@ DWORD client_cli_verify_certificate_ex(freerdp* instance, const char* host, UINT
 	printf("\tSubject:     %s\n", subject);
 	printf("\tIssuer:      %s\n", issuer);
 	printf("\tThumbprint:  %s\n", fingerprint);
+
 	printf("The above X.509 certificate could not be verified, possibly because you do not have\n"
 	       "the CA certificate in your certificate store, or the certificate has expired.\n"
 	       "Please look at the OpenSSL documentation on how to add a private CA to the store.\n");
@@ -644,11 +648,79 @@ DWORD client_cli_verify_changed_certificate_ex(freerdp* instance, const char* ho
 	printf("\tIssuer:      %s\n", old_issuer);
 	printf("\tThumbprint:  %s\n", old_fingerprint);
 	printf("\n");
+	if (flags & VERIFY_CERT_FLAG_MATCH_LEGACY_SHA1)
+	{
+		printf("\tA matching entry with legacy SHA1 was found in local known_hosts2 store.\n");
+		printf("\tIf you just upgraded from a FreeRDP version before 2.0 this is expected.\n");
+		printf("\tThe hashing algorithm has been upgraded from SHA1 to SHA256.\n");
+		printf("\tAll manually accepted certificates must be reconfirmed!\n");
+		printf("\n");
+	}
 	printf("The above X.509 certificate does not match the certificate used for previous "
 	       "connections.\n"
 	       "This may indicate that the certificate has been tampered with.\n"
 	       "Please contact the administrator of the RDP server and clarify.\n");
 	return client_cli_accept_certificate(instance->settings);
+}
+
+BOOL client_cli_present_gateway_message(freerdp* instance, UINT32 type, BOOL isDisplayMandatory,
+                                        BOOL isConsentMandatory, size_t length,
+                                        const WCHAR* message)
+{
+	char answer;
+	const char* msgType = (type == GATEWAY_MESSAGE_CONSENT) ? "Consent message" : "Service message";
+
+	if (!isDisplayMandatory && !isConsentMandatory)
+		return TRUE;
+
+	printf("%s:\n", msgType);
+#if defined(WIN32)
+	printf("%.*S\n", (int)length, message);
+#else
+	{
+		LPSTR msg;
+		if (ConvertFromUnicode(CP_UTF8, 0, message, (int)(length / 2), &msg, 0, NULL, NULL) < 1)
+		{
+			printf("Failed to convert message!\n");
+			return FALSE;
+		}
+		printf("%s\n", msg);
+		free(msg);
+	}
+#endif
+
+	while (isConsentMandatory)
+	{
+		printf("I understand and agree to the terms of this policy (Y/N) \n");
+		fflush(stdout);
+		answer = fgetc(stdin);
+
+		if (feof(stdin))
+		{
+			printf("\nError: Could not read answer from stdin.\n");
+			return FALSE;
+		}
+
+		switch (answer)
+		{
+			case 'y':
+			case 'Y':
+				fgetc(stdin);
+				return TRUE;
+
+			case 'n':
+			case 'N':
+				fgetc(stdin);
+				return FALSE;
+
+			default:
+				break;
+		}
+
+		printf("\n");
+	}
+
+	return TRUE;
 }
 
 BOOL client_auto_reconnect(freerdp* instance)
@@ -658,6 +730,7 @@ BOOL client_auto_reconnect(freerdp* instance)
 
 BOOL client_auto_reconnect_ex(freerdp* instance, BOOL (*window_events)(freerdp* instance))
 {
+	UINT32 error;
 	UINT32 maxRetries;
 	UINT32 numRetries = 0;
 	rdpSettings* settings;
@@ -669,11 +742,21 @@ BOOL client_auto_reconnect_ex(freerdp* instance, BOOL (*window_events)(freerdp* 
 	maxRetries = settings->AutoReconnectMaxRetries;
 
 	/* Only auto reconnect on network disconnects. */
-	if (freerdp_error_info(instance) != 0)
-		return FALSE;
-
-	/* A network disconnect was detected */
-	WLog_INFO(TAG, "Network disconnect!");
+	error = freerdp_error_info(instance);
+	switch (error)
+	{
+		case ERRINFO_GRAPHICS_SUBSYSTEM_FAILED:
+			/* A network disconnect was detected */
+			WLog_WARN(TAG, "Disconnected by server hitting a bug or resource limit [%s]",
+			          freerdp_get_error_info_string(error));
+			break;
+		case ERRINFO_SUCCESS:
+			/* A network disconnect was detected */
+			WLog_INFO(TAG, "Network disconnect!");
+			break;
+		default:
+			return FALSE;
+	}
 
 	if (!settings->AutoReconnectionEnabled)
 	{

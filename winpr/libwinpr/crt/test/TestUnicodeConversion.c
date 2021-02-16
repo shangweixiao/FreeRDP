@@ -411,6 +411,31 @@ static BOOL test_ConvertToUnicode_wrapper(void)
 	int ii;
 	size_t i;
 
+	/* Test static string buffers of differing sizes */
+	{
+		char name[] = "someteststring";
+		const WCHAR cmp[] = { L's', L'o', L'm', L'e', L't', L'e', L's', L't',
+			                  L's', L't', L'r', L'i', L'n', L'g', 0 };
+		WCHAR xname[128] = { 0 };
+		LPWSTR aname = NULL;
+		LPWSTR wname = &xname[0];
+		const size_t len = strnlen(name, ARRAYSIZE(name) - 1);
+		ii = ConvertToUnicode(CP_UTF8, 0, name, len, &wname, ARRAYSIZE(xname));
+		if (ii != len)
+			goto fail;
+
+		if (memcmp(wname, cmp, sizeof(cmp)) != 0)
+			goto fail;
+
+		ii = ConvertToUnicode(CP_UTF8, 0, name, len, &aname, 0);
+		if (ii != len)
+			goto fail;
+		ii = memcmp(aname, cmp, sizeof(cmp));
+		free(aname);
+		if (ii != 0)
+			goto fail;
+	}
+
 	/* Test unterminated unicode string:
 	 * ConvertToUnicode must always null-terminate, even if the src string isn't
 	 */
@@ -433,7 +458,7 @@ static BOOL test_ConvertToUnicode_wrapper(void)
 	}
 	if ((i = _wcslen(dst)) != 16)
 	{
-		fprintf(stderr, "ConvertToUnicode failure A3: dst length is %d instead of 16\n", i);
+		fprintf(stderr, "ConvertToUnicode failure A3: dst length is %" PRIuz " instead of 16\n", i);
 		goto fail;
 	}
 	if (_wcscmp(dst, (const WCHAR*)cmp0))
@@ -455,7 +480,8 @@ static BOOL test_ConvertToUnicode_wrapper(void)
 	i = ConvertToUnicode(CP_UTF8, 0, src2, -1, &dst, 0);
 	if (i != 17)
 	{
-		fprintf(stderr, "ConvertToUnicode failure B1: unexpectedly returned %d instead of 17\n", i);
+		fprintf(stderr,
+		        "ConvertToUnicode failure B1: unexpectedly returned %" PRIuz " instead of 17\n", i);
 		goto fail;
 	}
 	if (dst == NULL)
@@ -465,7 +491,7 @@ static BOOL test_ConvertToUnicode_wrapper(void)
 	}
 	if ((i = _wcslen(dst)) != 16)
 	{
-		fprintf(stderr, "ConvertToUnicode failure B3: dst length is %d instead of 16\n", i);
+		fprintf(stderr, "ConvertToUnicode failure B3: dst length is %" PRIuz " instead of 16\n", i);
 		goto fail;
 	}
 	if (_wcscmp(dst, (WCHAR*)cmp0))
@@ -490,6 +516,9 @@ fail:
 
 int TestUnicodeConversion(int argc, char* argv[])
 {
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
+
 	/* Letters */
 
 	printf("Letters\n");

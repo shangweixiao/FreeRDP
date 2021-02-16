@@ -144,8 +144,8 @@ struct rdp_nla
 	SecPkgContext_Sizes ContextSizes;
 };
 
-static BOOL nla_send(rdpNla* nla);
-static int nla_recv(rdpNla* nla);
+static BOOL nla_send(rdpNla* nla, const char* msg);
+static int nla_recv(rdpNla* nla, const char* msg);
 static void nla_buffer_print(rdpNla* nla);
 static void nla_buffer_free(rdpNla* nla);
 static SECURITY_STATUS nla_encrypt_public_key_echo(rdpNla* nla);
@@ -159,9 +159,14 @@ static void nla_identity_free(SEC_WINNT_AUTH_IDENTITY* identity);
 
 #define ber_sizeof_sequence_octet_string(length) \
 	ber_sizeof_contextual_tag(ber_sizeof_octet_string(length)) + ber_sizeof_octet_string(length)
-#define ber_write_sequence_octet_string(stream, context, value, length)                \
-	ber_write_contextual_tag(stream, context, ber_sizeof_octet_string(length), TRUE) + \
-	    ber_write_octet_string(stream, value, length)
+
+static INLINE size_t ber_write_sequence_octet_string(wStream* stream, BYTE context,
+                                                     const BYTE* value, size_t length)
+{
+	size_t rv = ber_write_contextual_tag(stream, context, ber_sizeof_octet_string(length), TRUE);
+	rv += ber_write_octet_string(stream, value, length);
+	return rv;
+}
 
 /* CredSSP Client-To-Server Binding Hash\0 */
 static const BYTE ClientServerHashMagic[] = { 0x43, 0x72, 0x65, 0x64, 0x53, 0x53, 0x50, 0x20,
@@ -241,7 +246,7 @@ static int nla_client_init(rdpNla* nla)
 		settings->DisableCredentialsDelegation = TRUE;
 
 	if (is_empty(settings->Username) ||
-	    (is_empty(settings->Password) && is_empty(settings->RedirectionPassword)))
+	    (is_empty(settings->Password) && is_empty((const char*)settings->RedirectionPassword)))
 	{
 		PromptPassword = TRUE;
 	}
@@ -520,12 +525,8 @@ int nla_client_begin(rdpNla* nla)
 
 	nla->negoToken.pvBuffer = nla->outputBuffer.pvBuffer;
 	nla->negoToken.cbBuffer = nla->outputBuffer.cbBuffer;
-	WLog_DBG(TAG, "Sending Authentication Token");
-#if defined(WITH_DEBUG_NLA)
-	winpr_HexDump(TAG, WLOG_DEBUG, nla->negoToken.pvBuffer, nla->negoToken.cbBuffer);
-#endif
 
-	if (!nla_send(nla))
+	if (!nla_send(nla, "Client: Sending Authentication Token"))
 	{
 		nla_buffer_free(nla);
 		return -1;
@@ -613,12 +614,8 @@ static int nla_client_recv(rdpNla* nla)
 
 		nla->negoToken.pvBuffer = nla->outputBuffer.pvBuffer;
 		nla->negoToken.cbBuffer = nla->outputBuffer.cbBuffer;
-		WLog_DBG(TAG, "Sending Authentication Token");
-#if defined(WITH_DEBUG_NLA)
-		winpr_HexDump(TAG, WLOG_DEBUG, nla->negoToken.pvBuffer, nla->negoToken.cbBuffer);
-#endif
 
-		if (!nla_send(nla))
+		if (!nla_send(nla, "Client: Sending Authentication Token"))
 		{
 			nla_buffer_free(nla);
 			return -1;
@@ -658,7 +655,7 @@ static int nla_client_recv(rdpNla* nla)
 			return -1;
 		}
 
-		if (!nla_send(nla))
+		if (!nla_send(nla, "Client: Sending PubKeyAuth Token"))
 		{
 			nla_buffer_free(nla);
 			return -1;
@@ -848,11 +845,9 @@ static int nla_server_authenticate(rdpNla* nla)
 		nla->inputBufferDesc.pBuffers = &nla->inputBuffer;
 		nla->inputBuffer.BufferType = SECBUFFER_TOKEN;
 
-		if (nla_recv(nla) < 0)
+		if (nla_recv(nla, "Receiving Authentication Token") < 0)
 			return -1;
 
-		WLog_DBG(TAG, "Receiving Authentication Token");
-		nla_buffer_print(nla);
 		nla->inputBuffer.pvBuffer = nla->negoToken.pvBuffer;
 		nla->inputBuffer.cbBuffer = nla->negoToken.cbBuffer;
 
@@ -935,17 +930,14 @@ static int nla_server_authenticate(rdpNla* nla)
 		{
 			if (nla->outputBuffer.cbBuffer != 0)
 			{
-				if (!nla_send(nla))
+				if (!nla_send(nla, "Server: Sending response"))
 				{
 					nla_buffer_free(nla);
 					return -1;
 				}
 
-				if (nla_recv(nla) < 0)
+				if (nla_recv(nla, "Receiving pubkey Token") < 0)
 					return -1;
-
-				WLog_DBG(TAG, "Receiving pubkey Token");
-				nla_buffer_print(nla);
 			}
 
 			nla->havePubKeyAuth = TRUE;
@@ -1012,15 +1004,12 @@ static int nla_server_authenticate(rdpNla* nla)
 
 			WLog_ERR(TAG, "AcceptSecurityContext status %s [0x%08" PRIX32 "]",
 			         GetSecurityStatusString(nla->status), nla->status);
-			nla_send(nla);
+			nla_send(nla, "Server: Sending AcceptSecurityContext error status");
 			return -1; /* Access Denied */
 		}
 
 		/* send authentication token */
-		WLog_DBG(TAG, "Sending Authentication Token");
-		nla_buffer_print(nla);
-
-		if (!nla_send(nla))
+		if (!nla_send(nla, "Server: Sending Authentication Token"))
 		{
 			nla_buffer_free(nla);
 			return -1;
@@ -1036,7 +1025,7 @@ static int nla_server_authenticate(rdpNla* nla)
 
 	/* Receive encrypted credentials */
 
-	if (nla_recv(nla) < 0)
+	if (nla_recv(nla, "Receive Encryption Credentials") < 0)
 		return -1;
 
 	nla->status = nla_decrypt_ts_credentials(nla);
@@ -1144,6 +1133,7 @@ SECURITY_STATUS nla_encrypt_public_key_echo(rdpNla* nla)
 	const BOOL ntlm = (_tcsncmp(nla->packageName, NTLM_SSP_NAME, ARRAYSIZE(NTLM_SSP_NAME)) == 0);
 	public_key_length = nla->PublicKey.cbBuffer;
 
+	sspi_SecBufferFree(&nla->pubKeyAuth);
 	if (!sspi_SecBufferAlloc(&nla->pubKeyAuth,
 	                         public_key_length + nla->ContextSizes.cbSecurityTrailer))
 		return SEC_E_INSUFFICIENT_MEMORY;
@@ -1212,6 +1202,7 @@ SECURITY_STATUS nla_encrypt_public_key_hash(rdpNla* nla)
 	const size_t hashSize =
 	    nla->server ? sizeof(ServerClientHashMagic) : sizeof(ClientServerHashMagic);
 
+	sspi_SecBufferFree(&nla->pubKeyAuth);
 	if (!sspi_SecBufferAlloc(&nla->pubKeyAuth, auth_data_length))
 	{
 		status = SEC_E_INSUFFICIENT_MEMORY;
@@ -1914,7 +1905,7 @@ static size_t nla_sizeof_ts_request(size_t length)
  * @param credssp
  */
 
-BOOL nla_send(rdpNla* nla)
+BOOL nla_send(rdpNla* nla, const char* msg)
 {
 	BOOL rc = TRUE;
 	wStream* s;
@@ -1926,6 +1917,9 @@ BOOL nla_send(rdpNla* nla)
 	size_t error_code_context_length = 0;
 	size_t error_code_length = 0;
 	size_t client_nonce_length = 0;
+	WLog_DBG(TAG, "%s", msg);
+	nla_buffer_print(nla);
+
 	nego_tokens_length =
 	    (nla->negoToken.cbBuffer > 0) ? nla_sizeof_nego_tokens(nla->negoToken.cbBuffer) : 0;
 	pub_key_auth_length =
@@ -2069,6 +2063,7 @@ static int nla_decode_ts_request(rdpNla* nla, wStream* s)
 			return -1;
 		}
 
+		sspi_SecBufferFree(&nla->negoToken);
 		if (!sspi_SecBufferAlloc(&nla->negoToken, length))
 			return -1;
 
@@ -2097,6 +2092,7 @@ static int nla_decode_ts_request(rdpNla* nla, wStream* s)
 		    Stream_GetRemainingLength(s) < length)
 			return -1;
 
+		sspi_SecBufferFree(&nla->pubKeyAuth);
 		if (!sspi_SecBufferAlloc(&nla->pubKeyAuth, length))
 			return -1;
 
@@ -2111,6 +2107,8 @@ static int nla_decode_ts_request(rdpNla* nla, wStream* s)
 		{
 			if (!ber_read_integer(s, &nla->errorCode))
 				return -1;
+			WLog_WARN(TAG, "SPNEGO received NTSTATUS: %s [0x%08" PRIX32 "] from server",
+			          GetSecurityStatusString(nla->errorCode), nla->errorCode);
 		}
 
 		if (nla->peerVersion >= 5)
@@ -2121,6 +2119,7 @@ static int nla_decode_ts_request(rdpNla* nla, wStream* s)
 				    Stream_GetRemainingLength(s) < length)
 					return -1;
 
+				sspi_SecBufferFree(&nla->ClientNonce);
 				if (!sspi_SecBufferAlloc(&nla->ClientNonce, length))
 					return -1;
 
@@ -2185,7 +2184,8 @@ int nla_recv_pdu(rdpNla* nla, wStream* s)
 				break;
 
 			default:
-				WLog_ERR(TAG, "SPNEGO failed with NTSTATUS: 0x%08" PRIX32 "", nla->errorCode);
+				WLog_ERR(TAG, "SPNEGO failed with NTSTATUS: %s [0x%08" PRIX32 "]",
+				         GetSecurityStatusString(nla->errorCode), nla->errorCode);
 				code = FREERDP_ERROR_AUTHENTICATION_FAILED;
 				break;
 		}
@@ -2200,7 +2200,7 @@ int nla_recv_pdu(rdpNla* nla, wStream* s)
 	return 1;
 }
 
-int nla_recv(rdpNla* nla)
+int nla_recv(rdpNla* nla, const char* msg)
 {
 	wStream* s;
 	int status;
@@ -2208,7 +2208,7 @@ int nla_recv(rdpNla* nla)
 
 	if (!s)
 	{
-		WLog_ERR(TAG, "Stream_New failed!");
+		WLog_ERR(TAG, "[%s] Stream_New failed!", __FUNCTION__);
 		return -1;
 	}
 
@@ -2216,18 +2216,21 @@ int nla_recv(rdpNla* nla)
 
 	if (status < 0)
 	{
-		WLog_ERR(TAG, "nla_recv() error: %d", status);
+		WLog_ERR(TAG, "[%s] error: %d", __FUNCTION__, status);
 		Stream_Free(s, TRUE);
 		return -1;
 	}
 
 	if (nla_decode_ts_request(nla, s) < 1)
 	{
+		WLog_ERR(TAG, "[%s] Invalid data received, aborting", __FUNCTION__);
 		Stream_Free(s, TRUE);
 		return -1;
 	}
 
 	Stream_Free(s, TRUE);
+	WLog_DBG(TAG, "[%s] %s", __FUNCTION__, msg);
+	nla_buffer_print(nla);
 	return 1;
 }
 
@@ -2357,10 +2360,6 @@ rdpNla* nla_new(freerdp* instance, rdpTransport* transport, rdpSettings* setting
 	nla->sendSeqNum = 0;
 	nla->recvSeqNum = 0;
 	nla->version = 6;
-	ZeroMemory(&nla->ClientNonce, sizeof(SecBuffer));
-	ZeroMemory(&nla->negoToken, sizeof(SecBuffer));
-	ZeroMemory(&nla->pubKeyAuth, sizeof(SecBuffer));
-	ZeroMemory(&nla->authInfo, sizeof(SecBuffer));
 	SecInvalidateHandle(&nla->context);
 
 	if (settings->NtlmSamFile)
@@ -2465,6 +2464,7 @@ void nla_free(rdpNla* nla)
 	sspi_SecBufferFree(&nla->tsCredentials);
 	free(nla->ServicePrincipalName);
 	nla_identity_free(nla->identity);
+	nla_buffer_free(nla);
 	free(nla);
 }
 

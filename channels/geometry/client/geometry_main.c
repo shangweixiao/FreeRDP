@@ -27,7 +27,6 @@
 
 #include <winpr/crt.h>
 #include <winpr/synch.h>
-#include <winpr/interlocked.h>
 #include <winpr/print.h>
 #include <winpr/stream.h>
 #include <winpr/cmdline.h>
@@ -69,6 +68,7 @@ struct _GEOMETRY_PLUGIN
 	GEOMETRY_LISTENER_CALLBACK* listener_callback;
 
 	GeometryClientContext* context;
+	BOOL initialized;
 };
 typedef struct _GEOMETRY_PLUGIN GEOMETRY_PLUGIN;
 
@@ -80,23 +80,6 @@ static UINT32 mappedGeometryHash(UINT64* g)
 static BOOL mappedGeometryKeyCompare(UINT64* g1, UINT64* g2)
 {
 	return *g1 == *g2;
-}
-
-void mappedGeometryRef(MAPPED_GEOMETRY* g)
-{
-	InterlockedIncrement(&g->refCounter);
-}
-
-void mappedGeometryUnref(MAPPED_GEOMETRY* g)
-{
-	if (InterlockedDecrement(&g->refCounter))
-		return;
-
-	g->MappedGeometryUpdate = NULL;
-	g->MappedGeometryClear = NULL;
-	g->custom = NULL;
-	free(g->geometry.rects);
-	free(g);
 }
 
 static void freerdp_rgndata_reset(FREERDP_RGNDATA* data)
@@ -398,6 +381,11 @@ static UINT geometry_plugin_initialize(IWTSPlugin* pPlugin, IWTSVirtualChannelMa
 {
 	UINT status;
 	GEOMETRY_PLUGIN* geometry = (GEOMETRY_PLUGIN*)pPlugin;
+	if (geometry->initialized)
+	{
+		WLog_ERR(TAG, "[%s] channel initialized twice, aborting", GEOMETRY_DVC_CHANNEL_NAME);
+		return ERROR_INVALID_DATA;
+	}
 	geometry->listener_callback =
 	    (GEOMETRY_LISTENER_CALLBACK*)calloc(1, sizeof(GEOMETRY_LISTENER_CALLBACK));
 
@@ -410,10 +398,12 @@ static UINT geometry_plugin_initialize(IWTSPlugin* pPlugin, IWTSVirtualChannelMa
 	geometry->listener_callback->iface.OnNewChannelConnection = geometry_on_new_channel_connection;
 	geometry->listener_callback->plugin = pPlugin;
 	geometry->listener_callback->channel_mgr = pChannelMgr;
-	status = pChannelMgr->CreateListener(pChannelMgr, GEOMETRY_DVC_CHANNEL_NAME, 0,
-	                                     (IWTSListenerCallback*)geometry->listener_callback,
-	                                     &(geometry->listener));
+	status =
+	    pChannelMgr->CreateListener(pChannelMgr, GEOMETRY_DVC_CHANNEL_NAME, 0,
+	                                &geometry->listener_callback->iface, &(geometry->listener));
 	geometry->listener->pInterface = geometry->iface.pInterface;
+
+	geometry->initialized = status == CHANNEL_RC_OK;
 	return status;
 }
 
@@ -426,6 +416,13 @@ static UINT geometry_plugin_terminated(IWTSPlugin* pPlugin)
 {
 	GEOMETRY_PLUGIN* geometry = (GEOMETRY_PLUGIN*)pPlugin;
 	GeometryClientContext* context = (GeometryClientContext*)geometry->iface.pInterface;
+
+	if (geometry && geometry->listener_callback)
+	{
+		IWTSVirtualChannelManager* mgr = geometry->listener_callback->channel_mgr;
+		if (mgr)
+			IFCALL(mgr->DestroyListener, mgr, geometry->listener);
+	}
 
 	if (context)
 		HashTable_Free(context->geometries);

@@ -23,6 +23,7 @@
 #define FREERDP_SETTINGS_H
 
 #include <winpr/timezone.h>
+#include <winpr/wlog.h>
 
 #include <freerdp/api.h>
 #include <freerdp/types.h>
@@ -120,7 +121,7 @@ typedef enum
 #define RNS_UD_CS_STRONG_ASYMMETRIC_KEYS 0x0008
 #define RNS_UD_CS_VALID_CONNECTION_TYPE 0x0020
 #define RNS_UD_CS_SUPPORT_MONITOR_LAYOUT_PDU 0x0040
-#define RNS_UD_CS_SUPPORT_NETWORK_AUTODETECT 0x0080
+#define RNS_UD_CS_SUPPORT_NETCHAR_AUTODETECT 0x0080
 #define RNS_UD_CS_SUPPORT_DYNVC_GFX_PROTOCOL 0x0100
 #define RNS_UD_CS_SUPPORT_DYNAMIC_TIME_ZONE 0x0200
 #define RNS_UD_CS_SUPPORT_HEARTBEAT_PDU 0x0400
@@ -189,14 +190,14 @@ typedef enum
 #define NEG_MEMBLT_INDEX 0x03
 #define NEG_MEM3BLT_INDEX 0x04
 #define NEG_ATEXTOUT_INDEX 0x05
-#define NEG_AEXTTEXTOUT_INDEX 0x06  /* Must be ignored */
+#define NEG_AEXTTEXTOUT_INDEX 0x06 /* Must be ignored */
 #define NEG_DRAWNINEGRID_INDEX 0x07 /* Must be ignored */
 #define NEG_LINETO_INDEX 0x08
 #define NEG_MULTI_DRAWNINEGRID_INDEX 0x09
 #define NEG_OPAQUE_RECT_INDEX 0x0A /* Must be ignored */
 #define NEG_SAVEBITMAP_INDEX 0x0B
-#define NEG_WTEXTOUT_INDEX 0x0C   /* Must be ignored */
-#define NEG_MEMBLT_V2_INDEX 0x0D  /* Must be ignored */
+#define NEG_WTEXTOUT_INDEX 0x0C  /* Must be ignored */
+#define NEG_MEMBLT_V2_INDEX 0x0D /* Must be ignored */
 #define NEG_MEM3BLT_V2_INDEX 0x0E /* Must be ignored */
 #define NEG_MULTIDSTBLT_INDEX 0x0F
 #define NEG_MULTIPATBLT_INDEX 0x10
@@ -718,6 +719,7 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_PercentScreenUseWidth (1556)
 #define FreeRDP_PercentScreenUseHeight (1557)
 #define FreeRDP_DynamicResolutionUpdate (1558)
+#define FreeRDP_GrabMouse (1559)
 #define FreeRDP_SoftwareGdi (1601)
 #define FreeRDP_LocalConnection (1602)
 #define FreeRDP_AuthenticationOnly (1603)
@@ -799,6 +801,7 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_BitmapCacheV2CellInfo (2502)
 #define FreeRDP_ColorPointerFlag (2560)
 #define FreeRDP_PointerCacheSize (2561)
+#define FreeRDP_KeyboardRemappingList (2622)
 #define FreeRDP_KeyboardCodePage (2623)
 #define FreeRDP_KeyboardLayout (2624)
 #define FreeRDP_KeyboardType (2625)
@@ -894,6 +897,7 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
  * FreeRDP Settings Data Structure
  */
 
+#define FreeRDP_Settings_StableAPI_MAX 5312
 struct rdp_settings
 {
 	/**
@@ -1149,22 +1153,22 @@ struct rdp_settings
 	UINT64 padding1408[1408 - 1346]; /* 1346 */
 
 	/* Server Certificate */
-	ALIGN64 BOOL IgnoreCertificate;               /* 1408 */
-	ALIGN64 char* CertificateName;                /* 1409 */
-	ALIGN64 char* CertificateFile;                /* 1410 */
-	ALIGN64 char* PrivateKeyFile;                 /* 1411 */
-	ALIGN64 char* RdpKeyFile;                     /* 1412 */
-	ALIGN64 rdpRsaKey* RdpServerRsaKey;           /* 1413 */
-	ALIGN64 rdpCertificate* RdpServerCertificate; /* 1414 */
-	ALIGN64 BOOL ExternalCertificateManagement;   /* 1415 */
-	ALIGN64 char* CertificateContent;             /* 1416 */
-	ALIGN64 char* PrivateKeyContent;              /* 1417 */
-	ALIGN64 char* RdpKeyContent;                  /* 1418 */
-	ALIGN64 BOOL AutoAcceptCertificate;           /* 1419 */
-	ALIGN64 BOOL AutoDenyCertificate;             /* 1420 */
+	ALIGN64 BOOL IgnoreCertificate;                /* 1408 */
+	ALIGN64 char* CertificateName;                 /* 1409 */
+	ALIGN64 char* CertificateFile;                 /* 1410 */
+	ALIGN64 char* PrivateKeyFile;                  /* 1411 */
+	ALIGN64 char* RdpKeyFile;                      /* 1412 */
+	ALIGN64 rdpRsaKey* RdpServerRsaKey;            /* 1413 */
+	ALIGN64 rdpCertificate* RdpServerCertificate;  /* 1414 */
+	ALIGN64 BOOL ExternalCertificateManagement;    /* 1415 */
+	ALIGN64 char* CertificateContent;              /* 1416 */
+	ALIGN64 char* PrivateKeyContent;               /* 1417 */
+	ALIGN64 char* RdpKeyContent;                   /* 1418 */
+	ALIGN64 BOOL AutoAcceptCertificate;            /* 1419 */
+	ALIGN64 BOOL AutoDenyCertificate;              /* 1420 */
 	ALIGN64 char* CertificateAcceptedFingerprints; /* 1421 */
 	UINT64 padding1472[1472 - 1422];               /* 1422 */
-	UINT64 padding1536[1536 - 1472];              /* 1472 */
+	UINT64 padding1536[1536 - 1472];               /* 1472 */
 
 	/**
 	 * User Interface
@@ -1194,7 +1198,8 @@ struct rdp_settings
 	ALIGN64 BOOL PercentScreenUseWidth;   /* 1556 */
 	ALIGN64 BOOL PercentScreenUseHeight;  /* 1557 */
 	ALIGN64 BOOL DynamicResolutionUpdate; /* 1558 */
-	UINT64 padding1601[1601 - 1559];      /* 1559 */
+	ALIGN64 BOOL GrabMouse;               /* 1559 */
+	UINT64 padding1601[1601 - 1560];      /* 1560 */
 
 	/* Miscellaneous */
 	ALIGN64 BOOL SoftwareGdi;          /* 1601 */
@@ -1331,9 +1336,10 @@ struct rdp_settings
 	/* Pointer Capabilities */
 	ALIGN64 BOOL ColorPointerFlag;   /* 2560 */
 	ALIGN64 UINT32 PointerCacheSize; /* 2561 */
-	UINT64 padding2624[2623 - 2562]; /* 2562 */
+	UINT64 padding2624[2622 - 2562]; /* 2562 */
 
 	/* Input Capabilities */
+	ALIGN64 char* KeyboardRemappingList; /* 2622 */
 	ALIGN64 UINT32 KeyboardCodePage;    /* 2623 */
 	ALIGN64 UINT32 KeyboardLayout;      /* 2624 */
 	ALIGN64 UINT32 KeyboardType;        /* 2625 */
@@ -1558,8 +1564,22 @@ struct rdp_settings
 	                                   default value - currently UNUSED! */
 	ALIGN64 char* ActionScript;
 	ALIGN64 DWORD Floatbar;
+	ALIGN64 char* XSelectionAtom;
 };
 typedef struct rdp_settings rdpSettings;
+
+enum rdp_settings_type
+{
+	RDP_SETTINGS_TYPE_BOOL,
+	RDP_SETTINGS_TYPE_UINT16,
+	RDP_SETTINGS_TYPE_INT16,
+	RDP_SETTINGS_TYPE_UINT32,
+	RDP_SETTINGS_TYPE_INT32,
+	RDP_SETTINGS_TYPE_UINT64,
+	RDP_SETTINGS_TYPE_INT64,
+	RDP_SETTINGS_TYPE_STRING,
+	RDP_SETTINGS_TYPE_POINTER
+};
 
 #ifdef __cplusplus
 extern "C"
@@ -1575,6 +1595,8 @@ extern "C"
 	FREERDP_API rdpSettings* freerdp_settings_clone(const rdpSettings* settings);
 	FREERDP_API BOOL freerdp_settings_copy(rdpSettings* dst, const rdpSettings* src);
 	FREERDP_API void freerdp_settings_free(rdpSettings* settings);
+
+	FREERDP_API void freerdp_settings_dump(wLog* log, DWORD level, const rdpSettings* settings);
 
 	FREERDP_API int freerdp_addin_set_argument(ADDIN_ARGV* args, char* argument);
 	FREERDP_API int freerdp_addin_replace_argument(ADDIN_ARGV* args, char* previous,
@@ -1669,6 +1691,14 @@ extern "C"
 	                                             const char* param);
 
 	FREERDP_API const void* freerdp_settings_get_pointer(const rdpSettings* settings, size_t id);
+
+	FREERDP_API BOOL freerdp_settings_set_value_for_name(rdpSettings* settings, const char* name,
+	                                                     const char* value);
+
+	FREERDP_API SSIZE_T freerdp_settings_get_key_for_name(const char* value);
+	FREERDP_API SSIZE_T freerdp_settings_get_type_for_name(const char* value);
+	FREERDP_API SSIZE_T freerdp_settings_get_type_for_key(size_t key);
+	FREERDP_API const char* freerdp_settings_get_name_for_key(size_t key);
 
 #ifdef __cplusplus
 }

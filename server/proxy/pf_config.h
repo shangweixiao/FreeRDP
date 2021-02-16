@@ -34,7 +34,7 @@ struct proxy_config
 	UINT16 Port;
 
 	/* target */
-	BOOL UseLoadBalanceInfo;
+	BOOL FixedTarget;
 	char* TargetHost;
 	UINT16 TargetPort;
 
@@ -65,9 +65,8 @@ struct proxy_config
 	BOOL TextOnly;
 	UINT32 MaxTextLength;
 
-	/* session capture */
-	BOOL SessionCapture;
-	char* CapturesDirectory;
+	/* gfx settings */
+	BOOL DecodeGFX;
 
 	/* modules */
 	char** Modules; /* module file names to load */
@@ -79,12 +78,21 @@ struct proxy_config
 
 typedef struct proxy_config proxyConfig;
 
-FREERDP_API BOOL pf_config_get_uint16(wIniFile* ini, const char* section, const char* key,
-                                      UINT16* result);
-FREERDP_API BOOL pf_config_get_uint32(wIniFile* ini, const char* section, const char* key,
-                                      UINT32* result);
-FREERDP_API BOOL pf_config_get_bool(wIniFile* ini, const char* section, const char* key);
-FREERDP_API const char* pf_config_get_str(wIniFile* ini, const char* section, const char* key);
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+	FREERDP_API BOOL pf_config_get_uint16(wIniFile* ini, const char* section, const char* key,
+	                                      UINT16* result);
+	FREERDP_API BOOL pf_config_get_uint32(wIniFile* ini, const char* section, const char* key,
+	                                      UINT32* result);
+	FREERDP_API BOOL pf_config_get_bool(wIniFile* ini, const char* section, const char* key);
+	FREERDP_API const char* pf_config_get_str(wIniFile* ini, const char* section, const char* key);
+
+#ifdef __cplusplus
+};
+#endif
 
 proxyConfig* pf_server_config_load(const char* path);
 void pf_server_config_print(proxyConfig* config);

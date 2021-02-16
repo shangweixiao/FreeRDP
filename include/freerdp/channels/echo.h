@@ -1,8 +1,9 @@
 /**
  * FreeRDP: A Remote Desktop Protocol Implementation
- * FreeRDP Proxy Server Session Capture
+ * Audio Input Redirection Virtual Channel
  *
- * Copyright 2019 Kobi Mizrachi <kmizrachi18@gmail.com>
+ * Copyright 2020 Armin Novak <anovak@thincast.com>
+ * Copyright 2020 Thincast Technologies GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +18,13 @@
  * limitations under the License.
  */
 
-#ifndef FREERDP_SERVER_PROXY_CAPTURE_H
-#define FREERDP_SERVER_PROXY_CAPTURE_H
+#ifndef FREERDP_CHANNEL_ECHO_H
+#define FREERDP_CHANNEL_ECHO_H
 
-#include "pf_context.h"
+#include <freerdp/api.h>
+#include <freerdp/dvc.h>
+#include <freerdp/types.h>
 
-BOOL pf_capture_create_session_directory(pClientContext* context);
-BOOL pf_capture_save_frame(pClientContext* pc, const BYTE* frame);
+#define ECHO_DVC_CHANNEL_NAME "ECHO"
 
-#endif /* FREERDP_SERVER_PROXY_CAPTURE_H */
+#endif /* FREERDP_CHANNEL_ECHO_H */

@@ -43,7 +43,7 @@
 UINT cliprdr_process_format_list(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen,
                                  UINT16 msgFlags)
 {
-	CLIPRDR_FORMAT_LIST formatList;
+	CLIPRDR_FORMAT_LIST formatList = { 0 };
 	CliprdrClientContext* context = cliprdr_get_client_interface(cliprdr);
 	UINT error = CHANNEL_RC_OK;
 
@@ -82,7 +82,7 @@ error_out:
 UINT cliprdr_process_format_list_response(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen,
                                           UINT16 msgFlags)
 {
-	CLIPRDR_FORMAT_LIST_RESPONSE formatListResponse;
+	CLIPRDR_FORMAT_LIST_RESPONSE formatListResponse = { 0 };
 	CliprdrClientContext* context = cliprdr_get_client_interface(cliprdr);
 	UINT error = CHANNEL_RC_OK;
 
@@ -206,7 +206,7 @@ static FILETIME uint64_to_filetime(UINT64 value)
  * @returns 0 on success, otherwise a Win32 error code.
  */
 UINT cliprdr_parse_file_list(const BYTE* format_data, UINT32 format_data_length,
-                             FILEDESCRIPTOR** file_descriptor_array, UINT32* file_descriptor_count)
+                             FILEDESCRIPTORW** file_descriptor_array, UINT32* file_descriptor_count)
 {
 	UINT result = NO_ERROR;
 	UINT32 i;
@@ -240,7 +240,7 @@ UINT cliprdr_parse_file_list(const BYTE* format_data, UINT32 format_data_length,
 	}
 
 	*file_descriptor_count = count;
-	*file_descriptor_array = calloc(count, sizeof(FILEDESCRIPTOR));
+	*file_descriptor_array = calloc(count, sizeof(FILEDESCRIPTORW));
 	if (!*file_descriptor_array)
 	{
 		result = ERROR_NOT_ENOUGH_MEMORY;
@@ -251,7 +251,7 @@ UINT cliprdr_parse_file_list(const BYTE* format_data, UINT32 format_data_length,
 	{
 		int c;
 		UINT64 lastWriteTime;
-		FILEDESCRIPTOR* file = &((*file_descriptor_array)[i]);
+		FILEDESCRIPTORW* file = &((*file_descriptor_array)[i]);
 
 		Stream_Read_UINT32(s, file->dwFlags);          /* flags (4 bytes) */
 		Stream_Seek(s, 32);                            /* reserved1 (32 bytes) */
@@ -288,9 +288,17 @@ out:
  *
  * @returns 0 on success, otherwise a Win32 error code.
  */
-UINT cliprdr_serialize_file_list(const FILEDESCRIPTOR* file_descriptor_array,
+UINT cliprdr_serialize_file_list(const FILEDESCRIPTORW* file_descriptor_array,
                                  UINT32 file_descriptor_count, BYTE** format_data,
                                  UINT32* format_data_length)
+{
+	return cliprdr_serialize_file_list_ex(CB_STREAM_FILECLIP_ENABLED, file_descriptor_array,
+	                                      file_descriptor_count, format_data, format_data_length);
+}
+
+UINT cliprdr_serialize_file_list_ex(UINT32 flags, const FILEDESCRIPTORW* file_descriptor_array,
+                                    UINT32 file_descriptor_count, BYTE** format_data,
+                                    UINT32* format_data_length)
 {
 	UINT result = NO_ERROR;
 	UINT32 i;
@@ -298,6 +306,12 @@ UINT cliprdr_serialize_file_list(const FILEDESCRIPTOR* file_descriptor_array,
 
 	if (!file_descriptor_array || !format_data || !format_data_length)
 		return ERROR_BAD_ARGUMENTS;
+
+	if ((flags & CB_STREAM_FILECLIP_ENABLED) == 0)
+	{
+		WLog_WARN(TAG, "No file clipboard support annouonced!");
+		return ERROR_BAD_ARGUMENTS;
+	}
 
 	s = Stream_New(NULL, 4 + file_descriptor_count * CLIPRDR_FILEDESCRIPTOR_SIZE);
 	if (!s)
@@ -309,7 +323,7 @@ UINT cliprdr_serialize_file_list(const FILEDESCRIPTOR* file_descriptor_array,
 	{
 		int c;
 		UINT64 lastWriteTime;
-		const FILEDESCRIPTOR* file = &file_descriptor_array[i];
+		const FILEDESCRIPTORW* file = &file_descriptor_array[i];
 
 		/*
 		 * There is a known issue with Windows server getting stuck in
@@ -318,11 +332,14 @@ UINT cliprdr_serialize_file_list(const FILEDESCRIPTOR* file_descriptor_array,
 		 *
 		 * https://support.microsoft.com/en-us/help/2258090
 		 */
-		if ((file->nFileSizeHigh > 0) || (file->nFileSizeLow >= CLIPRDR_MAX_FILE_SIZE))
+		if ((flags & CB_HUGE_FILE_SUPPORT_ENABLED) == 0)
 		{
-			WLog_ERR(TAG, "cliprdr does not support files over 2 GB");
-			result = ERROR_FILE_TOO_LARGE;
-			goto error;
+			if ((file->nFileSizeHigh > 0) || (file->nFileSizeLow >= CLIPRDR_MAX_FILE_SIZE))
+			{
+				WLog_ERR(TAG, "cliprdr does not support files over 2 GB");
+				result = ERROR_FILE_TOO_LARGE;
+				goto error;
+			}
 		}
 
 		Stream_Write_UINT32(s, file->dwFlags);          /* flags (4 bytes) */

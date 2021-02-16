@@ -1194,11 +1194,28 @@ int rdp_client_transition_to_state(rdpRdp* rdp, int state)
 
 		case CONNECTION_STATE_ACTIVE:
 			rdp->state = CONNECTION_STATE_ACTIVE;
+			{
+				ActivatedEventArgs activatedEvent;
+				rdpContext* context = rdp->context;
+				EventArgsInit(&activatedEvent, "libfreerdp");
+				activatedEvent.firstActivation = !rdp->deactivation_reactivation;
+				PubSub_OnActivated(context->pubSub, context, &activatedEvent);
+			}
+
 			break;
 
 		default:
 			status = -1;
 			break;
+	}
+
+	{
+		ConnectionStateChangeEventArgs stateEvent;
+		rdpContext* context = rdp->context;
+		EventArgsInit(&stateEvent, "libfreerdp");
+		stateEvent.state = rdp->state;
+		stateEvent.active = rdp->state == CONNECTION_STATE_ACTIVE;
+		PubSub_OnConnectionStateChange(context->pubSub, context, &stateEvent);
 	}
 
 	return status;
@@ -1588,4 +1605,11 @@ const char* rdp_server_connection_state_string(int state)
 		default:
 			return "UNKNOWN";
 	}
+}
+
+int rdp_client_get_state(rdpRdp* rdp)
+{
+	if (!rdp)
+		return -1;
+	return rdp->state;
 }

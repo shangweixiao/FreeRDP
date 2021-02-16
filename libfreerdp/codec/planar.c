@@ -33,6 +33,69 @@
 
 #define TAG FREERDP_TAG("codec")
 
+static INLINE UINT32 planar_invert_format(BITMAP_PLANAR_CONTEXT* planar, BOOL alpha,
+                                          UINT32 DstFormat)
+{
+
+	if (planar->bgr && alpha)
+	{
+		switch (DstFormat)
+		{
+			case PIXEL_FORMAT_ARGB32:
+				DstFormat = PIXEL_FORMAT_ABGR32;
+				break;
+			case PIXEL_FORMAT_XRGB32:
+				DstFormat = PIXEL_FORMAT_XBGR32;
+				break;
+			case PIXEL_FORMAT_ABGR32:
+				DstFormat = PIXEL_FORMAT_ARGB32;
+				break;
+			case PIXEL_FORMAT_XBGR32:
+				DstFormat = PIXEL_FORMAT_XRGB32;
+				break;
+			case PIXEL_FORMAT_BGRA32:
+				DstFormat = PIXEL_FORMAT_RGBA32;
+				break;
+			case PIXEL_FORMAT_BGRX32:
+				DstFormat = PIXEL_FORMAT_RGBX32;
+				break;
+			case PIXEL_FORMAT_RGBA32:
+				DstFormat = PIXEL_FORMAT_BGRA32;
+				break;
+			case PIXEL_FORMAT_RGBX32:
+				DstFormat = PIXEL_FORMAT_BGRX32;
+				break;
+			case PIXEL_FORMAT_RGB24:
+				DstFormat = PIXEL_FORMAT_BGR24;
+				break;
+			case PIXEL_FORMAT_BGR24:
+				DstFormat = PIXEL_FORMAT_RGB24;
+				break;
+			case PIXEL_FORMAT_RGB16:
+				DstFormat = PIXEL_FORMAT_BGR16;
+				break;
+			case PIXEL_FORMAT_BGR16:
+				DstFormat = PIXEL_FORMAT_RGB16;
+				break;
+			case PIXEL_FORMAT_ARGB15:
+				DstFormat = PIXEL_FORMAT_ABGR15;
+				break;
+			case PIXEL_FORMAT_RGB15:
+				DstFormat = PIXEL_FORMAT_BGR15;
+				break;
+			case PIXEL_FORMAT_ABGR15:
+				DstFormat = PIXEL_FORMAT_ARGB15;
+				break;
+			case PIXEL_FORMAT_BGR15:
+				DstFormat = PIXEL_FORMAT_RGB15;
+				break;
+			default:
+				break;
+		}
+	}
+	return DstFormat;
+}
+
 static INLINE BOOL freerdp_bitmap_planar_compress_plane_rle(const BYTE* plane, UINT32 width,
                                                             UINT32 height, BYTE* outPlane,
                                                             UINT32* dstSize);
@@ -391,52 +454,54 @@ static INLINE BOOL writeLine(BYTE** ppRgba, UINT32 DstFormat, UINT32 width, cons
 
 	switch (DstFormat)
 	{
-	case PIXEL_FORMAT_BGRA32:
-		for (x = 0; x < width; x++)
-		{
-			*(*ppRgba)++ = *(*ppB)++;
-			*(*ppRgba)++ = *(*ppG)++;
-			*(*ppRgba)++ = *(*ppR)++;
-			*(*ppRgba)++ = *(*ppA)++;
-		}
-
-		return TRUE;
-
-	case PIXEL_FORMAT_BGRX32:
-		for (x = 0; x < width; x++)
-		{
-			*(*ppRgba)++ = *(*ppB)++;
-			*(*ppRgba)++ = *(*ppG)++;
-			*(*ppRgba)++ = *(*ppR)++;
-			*(*ppRgba)++ = 0xFF;
-		}
-
-		return TRUE;
-
-	default:
-		if (ppA)
-		{
+		case PIXEL_FORMAT_BGRA32:
 			for (x = 0; x < width; x++)
 			{
-				BYTE alpha = *(*ppA)++;
-				UINT32 color = FreeRDPGetColor(DstFormat, *(*ppR)++, *(*ppG)++, *(*ppB)++, alpha);
-				WriteColor(*ppRgba, DstFormat, color);
-				*ppRgba += GetBytesPerPixel(DstFormat);
+				*(*ppRgba)++ = *(*ppB)++;
+				*(*ppRgba)++ = *(*ppG)++;
+				*(*ppRgba)++ = *(*ppR)++;
+				*(*ppRgba)++ = *(*ppA)++;
 			}
-		}
-		else
-		{
-			const BYTE alpha = 0xFF;
 
+			return TRUE;
+
+		case PIXEL_FORMAT_BGRX32:
 			for (x = 0; x < width; x++)
 			{
-				UINT32 color = FreeRDPGetColor(DstFormat, *(*ppR)++, *(*ppG)++, *(*ppB)++, alpha);
-				WriteColor(*ppRgba, DstFormat, color);
-				*ppRgba += GetBytesPerPixel(DstFormat);
+				*(*ppRgba)++ = *(*ppB)++;
+				*(*ppRgba)++ = *(*ppG)++;
+				*(*ppRgba)++ = *(*ppR)++;
+				*(*ppRgba)++ = 0xFF;
 			}
-		}
 
-		return TRUE;
+			return TRUE;
+
+		default:
+			if (ppA)
+			{
+				for (x = 0; x < width; x++)
+				{
+					BYTE alpha = *(*ppA)++;
+					UINT32 color =
+					    FreeRDPGetColor(DstFormat, *(*ppR)++, *(*ppG)++, *(*ppB)++, alpha);
+					WriteColor(*ppRgba, DstFormat, color);
+					*ppRgba += GetBytesPerPixel(DstFormat);
+				}
+			}
+			else
+			{
+				const BYTE alpha = 0xFF;
+
+				for (x = 0; x < width; x++)
+				{
+					UINT32 color =
+					    FreeRDPGetColor(DstFormat, *(*ppR)++, *(*ppG)++, *(*ppB)++, alpha);
+					WriteColor(*ppRgba, DstFormat, color);
+					*ppRgba += GetBytesPerPixel(DstFormat);
+				}
+			}
+
+			return TRUE;
 	}
 }
 
@@ -482,6 +547,8 @@ static BOOL planar_subsample_expand(const BYTE* plane, size_t planeLength, UINT3
 {
 	size_t pos = 0;
 	UINT32 y;
+	WINPR_UNUSED(planeLength);
+
 	if (!plane || !deltaPlane)
 		return FALSE;
 
@@ -547,6 +614,8 @@ BOOL planar_decompress(BITMAP_PLANAR_CONTEXT* planar, const BYTE* pSrcData, UINT
 	cs = (FormatHeader & PLANAR_FORMAT_HEADER_CS) ? TRUE : FALSE;
 	rle = (FormatHeader & PLANAR_FORMAT_HEADER_RLE) ? TRUE : FALSE;
 	alpha = (FormatHeader & PLANAR_FORMAT_HEADER_NA) ? FALSE : TRUE;
+
+	DstFormat = planar_invert_format(planar, alpha, DstFormat);
 
 	if (alpha)
 		useAlpha = ColorHasAlpha(DstFormat);
@@ -1170,7 +1239,6 @@ BYTE* freerdp_bitmap_planar_delta_encode_plane(const BYTE* inPlane, UINT32 width
                                                BYTE* outPlane)
 {
 	char s2c;
-	INT32 delta;
 	UINT32 y, x;
 	BYTE* outPtr;
 	const BYTE *srcPtr, *prevLinePtr;
@@ -1194,9 +1262,10 @@ BYTE* freerdp_bitmap_planar_delta_encode_plane(const BYTE* inPlane, UINT32 width
 	{
 		for (x = 0; x < width; x++, outPtr++, srcPtr++, prevLinePtr++)
 		{
-			delta = *srcPtr - *prevLinePtr;
+			INT32 delta = *srcPtr - *prevLinePtr;
 			s2c = (delta >= 0) ? (char)delta : (char)(~((BYTE)(-delta)) + 1);
-			s2c = (s2c >= 0) ? (s2c << 1) : (char)(((~((BYTE)s2c) + 1) << 1) - 1);
+			s2c = (s2c >= 0) ? (char)((UINT32)s2c << 1)
+			                 : (char)(((UINT32)(~((BYTE)s2c) + 1) << 1) - 1);
 			*outPtr = (BYTE)s2c;
 		}
 	}
@@ -1238,6 +1307,9 @@ BYTE* freerdp_bitmap_compress_planar(BITMAP_PLANAR_CONTEXT* context, const BYTE*
 		FormatHeader |= PLANAR_FORMAT_HEADER_NA;
 
 	planeSize = width * height;
+
+	if (!context->AllowSkipAlpha)
+		format = planar_invert_format(context, TRUE, format);
 
 	if (!freerdp_split_color_planes(data, format, width, height, scanline, context->planes))
 		return NULL;
@@ -1394,6 +1466,7 @@ BOOL freerdp_bitmap_planar_context_reset(BITMAP_PLANAR_CONTEXT* context, UINT32 
 	if (!context)
 		return FALSE;
 
+	context->bgr = FALSE;
 	context->maxWidth = width;
 	context->maxHeight = height;
 	context->maxPlaneSize = context->maxWidth * context->maxHeight;
@@ -1464,4 +1537,9 @@ void freerdp_bitmap_planar_context_free(BITMAP_PLANAR_CONTEXT* context)
 	free(context->deltaPlanesBuffer);
 	free(context->rlePlanesBuffer);
 	free(context);
+}
+
+void freerdp_planar_switch_bgr(BITMAP_PLANAR_CONTEXT* planar, BOOL bgr)
+{
+	planar->bgr = bgr;
 }

@@ -28,6 +28,10 @@
 
 typedef struct xf_context xfContext;
 
+#ifdef WITH_XCURSOR
+#include <X11/Xcursor/Xcursor.h>
+#endif
+
 #include <freerdp/api.h>
 
 #include "xf_window.h"
@@ -47,6 +51,14 @@ typedef struct xf_context xfContext;
 #include <freerdp/codec/h264.h>
 #include <freerdp/codec/progressive.h>
 #include <freerdp/codec/region.h>
+
+#if !defined(XcursorUInt)
+typedef unsigned int XcursorUInt;
+#endif
+
+#if !defined(XcursorPixel)
+typedef XcursorUInt XcursorPixel;
+#endif
 
 struct xf_FullscreenMonitors
 {
@@ -69,6 +81,12 @@ typedef struct xf_WorkArea xfWorkArea;
 struct xf_pointer
 {
 	rdpPointer pointer;
+	XcursorPixel* cursorPixels;
+	UINT32 nCursors;
+	UINT32 mCursors;
+	UINT32* cursorWidths;
+	UINT32* cursorHeights;
+	Cursor* cursors;
 	Cursor cursor;
 };
 typedef struct xf_pointer xfPointer;
@@ -190,6 +208,8 @@ struct xf_context
 
 	Atom UTF8_STRING;
 
+	Atom _XWAYLAND_MAY_GRAB_KEYBOARD;
+
 	Atom _NET_WM_ICON;
 	Atom _MOTIF_WM_HINTS;
 	Atom _NET_CURRENT_DESKTOP;
@@ -248,6 +268,8 @@ struct xf_context
 	button_map button_map[NUM_BUTTONS_MAPPED];
 	BYTE savedMaximizedState;
 	UINT32 locked;
+	BOOL firstPressRightCtrl;
+	BOOL ungrabKeyboardWithRightCtrl;
 };
 
 BOOL xf_create_window(xfContext* xfc);
@@ -307,7 +329,11 @@ void xf_lock_x11_(xfContext* xfc, const char* fkt);
 void xf_unlock_x11_(xfContext* xfc, const char* fkt);
 
 BOOL xf_picture_transform_required(xfContext* xfc);
-void xf_draw_screen(xfContext* xfc, int x, int y, int w, int h);
+
+#define xf_draw_screen(_xfc, _x, _y, _w, _h) \
+	xf_draw_screen_((_xfc), (_x), (_y), (_w), (_h), __FUNCTION__, __FILE__, __LINE__)
+void xf_draw_screen_(xfContext* xfc, int x, int y, int w, int h, const char* fkt, const char* file,
+                     int line);
 
 FREERDP_API DWORD xf_exit_code_from_disconnect_reason(DWORD reason);
 

@@ -139,14 +139,14 @@ void rpc_pdu_header_print(rpcconn_hdr_t* header)
 	}
 }
 
-void rpc_pdu_header_init(rdpRpc* rpc, rpcconn_hdr_t* header)
+void rpc_pdu_header_init(rdpRpc* rpc, rpcconn_common_hdr_t* header)
 {
-	header->common.rpc_vers = rpc->rpc_vers;
-	header->common.rpc_vers_minor = rpc->rpc_vers_minor;
-	header->common.packed_drep[0] = rpc->packed_drep[0];
-	header->common.packed_drep[1] = rpc->packed_drep[1];
-	header->common.packed_drep[2] = rpc->packed_drep[2];
-	header->common.packed_drep[3] = rpc->packed_drep[3];
+	header->rpc_vers = rpc->rpc_vers;
+	header->rpc_vers_minor = rpc->rpc_vers_minor;
+	header->packed_drep[0] = rpc->packed_drep[0];
+	header->packed_drep[1] = rpc->packed_drep[1];
+	header->packed_drep[2] = rpc->packed_drep[2];
+	header->packed_drep[3] = rpc->packed_drep[3];
 }
 
 UINT32 rpc_offset_align(UINT32* offset, UINT32 alignment)
@@ -647,8 +647,8 @@ static BOOL rpc_channel_tls_connect(RpcChannel* channel, int timeout)
 
 	context = channel->client->context;
 	settings = context->settings;
-	proxyUsername = settings->ProxyUsername;
-	proxyPassword = settings->ProxyPassword;
+	proxyUsername = freerdp_settings_get_string(settings, FreeRDP_ProxyUsername);
+	proxyPassword = freerdp_settings_get_string(settings, FreeRDP_ProxyPassword);
 	{
 		sockfd = freerdp_tcp_connect(context, settings, channel->client->host,
 		                             channel->client->port, timeout);

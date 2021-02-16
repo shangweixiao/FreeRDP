@@ -30,7 +30,7 @@
 
 #define TAG CLIENT_TAG("wayland.input")
 
-#define MAX_CONTACTS 10
+#define MAX_CONTACTS 20
 
 typedef struct touch_contact
 {
@@ -137,9 +137,9 @@ BOOL wlf_handle_pointer_axis(freerdp* instance, const UwacPointerAxisEvent* ev)
 {
 	rdpInput* input;
 	UINT16 flags = 0;
-	int direction;
-	uint32_t step;
+	int32_t direction;
 	uint32_t x, y;
+	uint32_t i;
 
 	if (!instance || !ev || !instance->input)
 		return FALSE;
@@ -152,7 +152,7 @@ BOOL wlf_handle_pointer_axis(freerdp* instance, const UwacPointerAxisEvent* ev)
 
 	input = instance->input;
 
-	direction = wl_fixed_to_int(ev->value);
+	direction = ev->value;
 	switch (ev->axis)
 	{
 		case WL_POINTER_AXIS_VERTICAL_SCROLL:
@@ -171,12 +171,22 @@ BOOL wlf_handle_pointer_axis(freerdp* instance, const UwacPointerAxisEvent* ev)
 			return FALSE;
 	}
 
-	step = (uint32_t)abs(direction);
-	if (step > WheelRotationMask)
-		step = WheelRotationMask;
-	flags |= step;
+	/* Wheel rotation steps:
+	 *
+	 * positive: 0 ... 0xFF  -> slow ... fast
+	 * negative: 0 ... 0xFF  -> fast ... slow
+	 */
+	for (i = 0; i < abs(direction); i++)
+	{
+		uint32_t cflags = flags | 0x78;
+		/* Convert negative values to 9bit twos complement */
+		if (flags & PTR_FLAGS_WHEEL_NEGATIVE)
+			cflags = (flags & 0xFF00) | (0x100 - (cflags & 0xFF));
+		if (!freerdp_input_send_mouse_event(input, cflags, (UINT16)x, (UINT16)y))
+			return FALSE;
+	}
 
-	return freerdp_input_send_mouse_event(input, flags, (UINT16)x, (UINT16)y);
+	return TRUE;
 }
 
 BOOL wlf_handle_key(freerdp* instance, const UwacKeyEvent* ev)
@@ -198,13 +208,34 @@ BOOL wlf_handle_key(freerdp* instance, const UwacKeyEvent* ev)
 
 BOOL wlf_keyboard_enter(freerdp* instance, const UwacKeyboardEnterLeaveEvent* ev)
 {
+	if (!instance || !ev || !instance->input)
+		return FALSE;
+
+	((wlfContext*)instance->context)->focusing = TRUE;
+	return TRUE;
+}
+
+BOOL wlf_keyboard_modifiers(freerdp* instance, const UwacKeyboardModifiersEvent* ev)
+{
 	rdpInput* input;
+	uint32_t syncFlags;
 
 	if (!instance || !ev || !instance->input)
 		return FALSE;
 
 	input = instance->input;
-	return freerdp_input_send_focus_in_event(input, 0) &&
+	syncFlags = 0;
+
+	if (ev->modifiers & UWAC_MOD_CAPS_MASK)
+		syncFlags |= KBD_SYNC_CAPS_LOCK;
+	if (ev->modifiers & UWAC_MOD_NUM_MASK)
+		syncFlags |= KBD_SYNC_NUM_LOCK;
+
+	if (!((wlfContext*)instance->context)->focusing)
+		return TRUE;
+
+	((wlfContext*)instance->context)->focusing = FALSE;
+	return freerdp_input_send_focus_in_event(input, syncFlags) &&
 	       freerdp_input_send_mouse_event(input, PTR_FLAGS_MOVE, 0, 0);
 }
 
@@ -230,6 +261,9 @@ BOOL wlf_handle_touch_up(freerdp* instance, const UwacTouchUp* ev)
 			break;
 		}
 	}
+
+	if (i == MAX_CONTACTS)
+		return FALSE;
 
 	WLog_DBG(TAG, "%s called | event_id: %u | x: %u / y: %u", __FUNCTION__, touchId, x, y);
 
@@ -272,8 +306,6 @@ BOOL wlf_handle_touch_down(freerdp* instance, const UwacTouchDown* ev)
 	y = ev->y;
 	touchId = ev->id;
 
-	WLog_DBG(TAG, "%s called | event_id: %u | x: %u / y: %u", __FUNCTION__, touchId, x, y);
-
 	for (i = 0; i < MAX_CONTACTS; i++)
 	{
 		if (contacts[i].id == 0)
@@ -285,6 +317,11 @@ BOOL wlf_handle_touch_down(freerdp* instance, const UwacTouchDown* ev)
 			break;
 		}
 	}
+
+	if (i == MAX_CONTACTS)
+		return FALSE;
+
+	WLog_DBG(TAG, "%s called | event_id: %u | x: %u / y: %u", __FUNCTION__, touchId, x, y);
 
 	if (!wlf_scale_coordinates(instance->context, &x, &y, TRUE))
 		return FALSE;
@@ -339,6 +376,9 @@ BOOL wlf_handle_touch_motion(freerdp* instance, const UwacTouchMotion* ev)
 			break;
 		}
 	}
+
+	if (i == MAX_CONTACTS)
+		return FALSE;
 
 	WLog_DBG(TAG, "%s called | event_id: %u | x: %u / y: %u", __FUNCTION__, touchId, x, y);
 

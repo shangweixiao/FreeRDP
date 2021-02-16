@@ -39,6 +39,7 @@
 #include <winpr/stream.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/codec/dsp.h>
+#include <freerdp/channels/audin.h>
 
 #include "audin_main.h"
 
@@ -100,6 +101,10 @@ struct _AUDIN_PLUGIN
 
 	FREERDP_DSP_CONTEXT* dsp_context;
 	wLog* log;
+
+	IWTSListener* listener;
+
+	BOOL initialized;
 };
 
 static BOOL audin_process_addin_args(AUDIN_PLUGIN* audin, ADDIN_ARGV* args);
@@ -666,6 +671,7 @@ static UINT audin_on_new_channel_connection(IWTSListenerCallback* pListenerCallb
  */
 static UINT audin_plugin_initialize(IWTSPlugin* pPlugin, IWTSVirtualChannelManager* pChannelMgr)
 {
+	UINT rc;
 	AUDIN_PLUGIN* audin = (AUDIN_PLUGIN*)pPlugin;
 
 	if (!audin)
@@ -673,6 +679,12 @@ static UINT audin_plugin_initialize(IWTSPlugin* pPlugin, IWTSVirtualChannelManag
 
 	if (!pChannelMgr)
 		return ERROR_INVALID_PARAMETER;
+
+	if (audin->initialized)
+	{
+		WLog_ERR(TAG, "[%s] channel initialized twice, aborting", AUDIN_DVC_CHANNEL_NAME);
+		return ERROR_INVALID_DATA;
+	}
 
 	WLog_Print(audin->log, WLOG_TRACE, "...");
 	audin->listener_callback = (AUDIN_LISTENER_CALLBACK*)calloc(1, sizeof(AUDIN_LISTENER_CALLBACK));
@@ -686,8 +698,11 @@ static UINT audin_plugin_initialize(IWTSPlugin* pPlugin, IWTSVirtualChannelManag
 	audin->listener_callback->iface.OnNewChannelConnection = audin_on_new_channel_connection;
 	audin->listener_callback->plugin = pPlugin;
 	audin->listener_callback->channel_mgr = pChannelMgr;
-	return pChannelMgr->CreateListener(pChannelMgr, "AUDIO_INPUT", 0,
-	                                   (IWTSListenerCallback*)audin->listener_callback, NULL);
+	rc = pChannelMgr->CreateListener(pChannelMgr, AUDIN_DVC_CHANNEL_NAME, 0,
+	                                 &audin->listener_callback->iface, &audin->listener);
+
+	audin->initialized = rc == CHANNEL_RC_OK;
+	return rc;
 }
 
 /**
@@ -704,6 +719,13 @@ static UINT audin_plugin_terminated(IWTSPlugin* pPlugin)
 		return CHANNEL_RC_BAD_CHANNEL_HANDLE;
 
 	WLog_Print(audin->log, WLOG_TRACE, "...");
+
+	if (audin->listener_callback)
+	{
+		IWTSVirtualChannelManager* mgr = audin->listener_callback->channel_mgr;
+		if (mgr)
+			IFCALL(mgr->DestroyListener, mgr, audin->listener);
+	}
 	audio_formats_free(audin->fixed_format, 1);
 
 	if (audin->device)

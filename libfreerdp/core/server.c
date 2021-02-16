@@ -195,7 +195,7 @@ static BOOL wts_read_drdynvc_data_first(rdpPeerChannel* channel, wStream* s, int
 
 	Stream_SetPosition(channel->receiveData, 0);
 
-	if (!Stream_EnsureRemainingCapacity(channel->receiveData, (int)channel->dvc_total_length))
+	if (!Stream_EnsureRemainingCapacity(channel->receiveData, channel->dvc_total_length))
 		return FALSE;
 
 	Stream_Write(channel->receiveData, Stream_Pointer(s), length);
@@ -404,7 +404,6 @@ static BOOL WTSReceiveChannelData(freerdp_peer* client, UINT16 channelId, const 
                                   size_t size, UINT32 flags, size_t totalSize)
 {
 	UINT32 i;
-	BOOL status = FALSE;
 	rdpMcs* mcs = client->context->rdp->mcs;
 
 	for (i = 0; i < mcs->channelCount; i++)
@@ -414,12 +413,13 @@ static BOOL WTSReceiveChannelData(freerdp_peer* client, UINT16 channelId, const 
 			rdpPeerChannel* channel = (rdpPeerChannel*)mcs->channels[i].handle;
 
 			if (channel)
-				status = WTSProcessChannelData(channel, channelId, data, size, flags, totalSize);
-			break;
+				return WTSProcessChannelData(channel, channelId, data, size, flags, totalSize);
 		}
 	}
 
-	return status;
+	WLog_WARN(TAG, "[%s] unknown channelId %" PRIu16 " ignored", __FUNCTION__, channelId);
+
+	return TRUE;
 }
 
 void WTSVirtualChannelManagerGetFileDescriptor(HANDLE hServer, void** fds, int* fds_count)
@@ -450,16 +450,16 @@ void WTSVirtualChannelManagerGetFileDescriptor(HANDLE hServer, void** fds, int* 
 #endif
 }
 
-BOOL WTSVirtualChannelManagerCheckFileDescriptor(HANDLE hServer)
+static BOOL WTSVirtualChannelManagerOpen(WTSVirtualChannelManager* vcm)
 {
-	wMessage message;
-	BOOL status = TRUE;
-	rdpPeerChannel* channel;
-	UINT32 dynvc_caps;
-	WTSVirtualChannelManager* vcm = (WTSVirtualChannelManager*)hServer;
+	if (!vcm)
+		return FALSE;
 
 	if ((vcm->drdynvc_state == DRDYNVC_STATE_NONE) && vcm->client->activated)
 	{
+		rdpPeerChannel* channel;
+		UINT32 dynvc_caps;
+
 		/* Initialize drdynvc channel once and only once. */
 		vcm->drdynvc_state = DRDYNVC_STATE_INITIALIZED;
 		channel =
@@ -474,6 +474,26 @@ BOOL WTSVirtualChannelManagerCheckFileDescriptor(HANDLE hServer)
 			if (!WTSVirtualChannelWrite(channel, (PCHAR)&dynvc_caps, sizeof(dynvc_caps), &written))
 				return FALSE;
 		}
+	}
+
+	return TRUE;
+}
+
+BOOL WTSVirtualChannelManagerCheckFileDescriptorEx(HANDLE hServer, BOOL autoOpen)
+{
+	wMessage message;
+	BOOL status = TRUE;
+	WTSVirtualChannelManager* vcm;
+
+	if (!hServer || hServer == INVALID_HANDLE_VALUE)
+		return FALSE;
+
+	vcm = (WTSVirtualChannelManager*)hServer;
+
+	if (autoOpen)
+	{
+		if (!WTSVirtualChannelManagerOpen(vcm))
+			return FALSE;
 	}
 
 	while (MessageQueue_Peek(vcm->queue, &message, TRUE))
@@ -497,6 +517,11 @@ BOOL WTSVirtualChannelManagerCheckFileDescriptor(HANDLE hServer)
 	}
 
 	return status;
+}
+
+BOOL WTSVirtualChannelManagerCheckFileDescriptor(HANDLE hServer)
+{
+	return WTSVirtualChannelManagerCheckFileDescriptorEx(hServer, TRUE);
 }
 
 HANDLE WTSVirtualChannelManagerGetEventHandle(HANDLE hServer)
@@ -668,6 +693,28 @@ const char* WTSChannelGetName(freerdp_peer* client, UINT16 channel_id)
 		return NULL;
 
 	return (const char*)channel->Name;
+}
+
+char** WTSGetAcceptedChannelNames(freerdp_peer* client, size_t* count)
+{
+	rdpMcs* mcs;
+	char** names;
+	UINT32 index;
+
+	if (!client || !client->context || !count)
+		return NULL;
+
+	mcs = client->context->rdp->mcs;
+	*count = mcs->channelCount;
+
+	names = (char**)calloc(mcs->channelCount, sizeof(char*));
+	if (!names)
+		return NULL;
+
+	for (index = 0; index < mcs->channelCount; index++)
+		names[index] = mcs->channels[index].Name;
+
+	return names;
 }
 
 BOOL WINAPI FreeRDP_WTSStartRemoteControlSessionW(LPWSTR pTargetServerName, ULONG TargetLogonId,

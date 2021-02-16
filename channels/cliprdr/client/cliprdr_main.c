@@ -24,6 +24,7 @@
 #include "config.h"
 #endif
 
+#include <winpr/wtypes.h>
 #include <winpr/crt.h>
 #include <winpr/print.h>
 
@@ -36,18 +37,36 @@
 #include "../cliprdr_common.h"
 
 #ifdef WITH_DEBUG_CLIPRDR
-static const char* const CB_MSG_TYPE_STRINGS[] = { "",
-	                                               "CB_MONITOR_READY",
-	                                               "CB_FORMAT_LIST",
-	                                               "CB_FORMAT_LIST_RESPONSE",
-	                                               "CB_FORMAT_DATA_REQUEST",
-	                                               "CB_FORMAT_DATA_RESPONSE",
-	                                               "CB_TEMP_DIRECTORY",
-	                                               "CB_CLIP_CAPS",
-	                                               "CB_FILECONTENTS_REQUEST",
-	                                               "CB_FILECONTENTS_RESPONSE",
-	                                               "CB_LOCK_CLIPDATA",
-	                                               "CB_UNLOCK_CLIPDATA" };
+static const char* CB_MSG_TYPE_STRINGS(UINT32 type)
+{
+	switch (type)
+	{
+		case CB_MONITOR_READY:
+			return "CB_MONITOR_READY";
+		case CB_FORMAT_LIST:
+			return "CB_FORMAT_LIST";
+		case CB_FORMAT_LIST_RESPONSE:
+			return "CB_FORMAT_LIST_RESPONSE";
+		case CB_FORMAT_DATA_REQUEST:
+			return "CB_FORMAT_DATA_REQUEST";
+		case CB_FORMAT_DATA_RESPONSE:
+			return "CB_FORMAT_DATA_RESPONSE";
+		case CB_TEMP_DIRECTORY:
+			return "CB_TEMP_DIRECTORY";
+		case CB_CLIP_CAPS:
+			return "CB_CLIP_CAPS";
+		case CB_FILECONTENTS_REQUEST:
+			return "CB_FILECONTENTS_REQUEST";
+		case CB_FILECONTENTS_RESPONSE:
+			return "CB_FILECONTENTS_RESPONSE";
+		case CB_LOCK_CLIPDATA:
+			return "CB_LOCK_CLIPDATA";
+		case CB_UNLOCK_CLIPDATA:
+			return "CB_UNLOCK_CLIPDATA";
+		default:
+			return "UNKNOWN";
+	}
+}
 #endif
 
 CliprdrClientContext* cliprdr_get_client_interface(cliprdrPlugin* cliprdr)
@@ -119,6 +138,9 @@ static void cliprdr_print_general_capability_flags(UINT32 flags)
 	if (flags & CB_CAN_LOCK_CLIPDATA)
 		WLog_INFO(TAG, "\tCB_CAN_LOCK_CLIPDATA");
 
+	if (flags & CB_HUGE_FILE_SUPPORT_ENABLED)
+		WLog_INFO(TAG, "\tCB_HUGE_FILE_SUPPORT_ENABLED");
+
 	WLog_INFO(TAG, "}");
 }
 #endif
@@ -157,6 +179,7 @@ static UINT cliprdr_process_general_capability(cliprdrPlugin* cliprdr, wStream* 
 	cliprdr->streamFileClipEnabled = (generalFlags & CB_STREAM_FILECLIP_ENABLED);
 	cliprdr->fileClipNoFilePaths = (generalFlags & CB_FILECLIP_NO_FILE_PATHS);
 	cliprdr->canLockClipData = (generalFlags & CB_CAN_LOCK_CLIPDATA);
+	cliprdr->hasHugeFileSupport = (generalFlags & CB_HUGE_FILE_SUPPORT_ENABLED);
 	cliprdr->capabilitiesReceived = TRUE;
 
 	if (!context->custom)
@@ -441,7 +464,7 @@ static UINT cliprdr_order_recv(cliprdrPlugin* cliprdr, wStream* s)
 
 #ifdef WITH_DEBUG_CLIPRDR
 	WLog_DBG(TAG, "msgType: %s (%" PRIu16 "), msgFlags: %" PRIu16 " dataLen: %" PRIu32 "",
-	         CB_MSG_TYPE_STRINGS[msgType], msgType, msgFlags, dataLen);
+	         CB_MSG_TYPE_STRINGS(msgType), msgType, msgFlags, dataLen);
 	winpr_HexDump(TAG, WLOG_DEBUG, Stream_Buffer(s), dataLen + 8);
 #endif
 
@@ -511,7 +534,7 @@ static UINT cliprdr_order_recv(cliprdrPlugin* cliprdr, wStream* s)
 
 		case CB_UNLOCK_CLIPDATA:
 			if ((error = cliprdr_process_unlock_clipdata(cliprdr, s, dataLen, msgFlags)))
-				WLog_ERR(TAG, "cliprdr_process_lock_clipdata failed with error %" PRIu32 "!",
+				WLog_ERR(TAG, "cliprdr_process_unlock_clipdata failed with error %" PRIu32 "!",
 				         error);
 
 			break;
@@ -539,8 +562,10 @@ static UINT cliprdr_client_capabilities(CliprdrClientContext* context,
                                         const CLIPRDR_CAPABILITIES* capabilities)
 {
 	wStream* s;
+	UINT32 flags;
 	const CLIPRDR_GENERAL_CAPABILITY_SET* generalCapabilitySet;
 	cliprdrPlugin* cliprdr = (cliprdrPlugin*)context->handle;
+
 	s = cliprdr_packet_new(CB_CLIP_CAPS, 0, 4 + CB_CAPSTYPE_GENERAL_LEN);
 
 	if (!s)
@@ -555,7 +580,30 @@ static UINT cliprdr_client_capabilities(CliprdrClientContext* context,
 	Stream_Write_UINT16(s, generalCapabilitySet->capabilitySetType);   /* capabilitySetType */
 	Stream_Write_UINT16(s, generalCapabilitySet->capabilitySetLength); /* lengthCapability */
 	Stream_Write_UINT32(s, generalCapabilitySet->version);             /* version */
-	Stream_Write_UINT32(s, generalCapabilitySet->generalFlags);        /* generalFlags */
+	flags = generalCapabilitySet->generalFlags;
+
+	/* Client capabilities are sent in response to server capabilities.
+	 * -> Do not request features the server does not support.
+	 * -> Update clipboard context feature state to what was agreed upon.
+	 */
+	if (!cliprdr->useLongFormatNames)
+		flags &= ~CB_USE_LONG_FORMAT_NAMES;
+	if (!cliprdr->streamFileClipEnabled)
+		flags &= ~CB_STREAM_FILECLIP_ENABLED;
+	if (!cliprdr->fileClipNoFilePaths)
+		flags &= ~CB_FILECLIP_NO_FILE_PATHS;
+	if (!cliprdr->canLockClipData)
+		flags &= ~CB_CAN_LOCK_CLIPDATA;
+	if (!cliprdr->hasHugeFileSupport)
+		flags &= ~CB_HUGE_FILE_SUPPORT_ENABLED;
+
+	cliprdr->useLongFormatNames = flags & CB_USE_LONG_FORMAT_NAMES;
+	cliprdr->streamFileClipEnabled = flags & CB_STREAM_FILECLIP_ENABLED;
+	cliprdr->fileClipNoFilePaths = flags & CB_FILECLIP_NO_FILE_PATHS;
+	cliprdr->canLockClipData = flags & CB_CAN_LOCK_CLIPDATA;
+	cliprdr->hasHugeFileSupport = flags & CB_HUGE_FILE_SUPPORT_ENABLED;
+
+	Stream_Write_UINT32(s, flags); /* generalFlags */
 	WLog_Print(cliprdr->log, WLOG_DEBUG, "ClientCapabilities");
 	return cliprdr_packet_send(cliprdr, s);
 }
@@ -572,7 +620,7 @@ static UINT cliprdr_temp_directory(CliprdrClientContext* context,
 	wStream* s;
 	WCHAR* wszTempDir = NULL;
 	cliprdrPlugin* cliprdr = (cliprdrPlugin*)context->handle;
-	s = cliprdr_packet_new(CB_TEMP_DIRECTORY, 0, 520 * 2);
+	s = cliprdr_packet_new(CB_TEMP_DIRECTORY, 0, 260 * sizeof(WCHAR));
 
 	if (!s)
 	{
@@ -585,11 +633,13 @@ static UINT cliprdr_temp_directory(CliprdrClientContext* context,
 	if (length < 0)
 		return ERROR_INTERNAL_ERROR;
 
-	if (length > 520)
-		length = 520;
+	/* Path must be 260 UTF16 characters with '\0' termination.
+	 * ensure this here */
+	if (length >= 260)
+		length = 259;
 
-	Stream_Write(s, wszTempDir, (size_t)length * 2);
-	Stream_Zero(s, (520 - (size_t)length) * 2);
+	Stream_Write_UTF16_String(s, wszTempDir, length);
+	Stream_Zero(s, 520 - (length * sizeof(WCHAR)));
 	free(wszTempDir);
 	WLog_Print(cliprdr->log, WLOG_DEBUG, "TempDirectory: %s", tempDirectory->szTempDir);
 	return cliprdr_packet_send(cliprdr, s);
@@ -655,7 +705,7 @@ static UINT cliprdr_client_lock_clipboard_data(CliprdrClientContext* context,
 
 	if (!s)
 	{
-		WLog_ERR(TAG, "cliprdr_packet_new failed!");
+		WLog_ERR(TAG, "cliprdr_packet_lock_clipdata_new failed!");
 		return ERROR_INTERNAL_ERROR;
 	}
 
@@ -679,7 +729,7 @@ cliprdr_client_unlock_clipboard_data(CliprdrClientContext* context,
 
 	if (!s)
 	{
-		WLog_ERR(TAG, "cliprdr_packet_new failed!");
+		WLog_ERR(TAG, "cliprdr_packet_unlock_clipdata_new failed!");
 		return ERROR_INTERNAL_ERROR;
 	}
 
@@ -750,6 +800,18 @@ cliprdr_client_file_contents_request(CliprdrClientContext* context,
 	wStream* s;
 	cliprdrPlugin* cliprdr = (cliprdrPlugin*)context->handle;
 
+	if (!cliprdr)
+		return ERROR_INTERNAL_ERROR;
+
+	if (!cliprdr->hasHugeFileSupport)
+	{
+		if (((UINT64)fileContentsRequest->cbRequested + fileContentsRequest->nPositionLow) >
+		    UINT32_MAX)
+			return ERROR_INVALID_PARAMETER;
+		if (fileContentsRequest->nPositionHigh != 0)
+			return ERROR_INVALID_PARAMETER;
+	}
+
 	s = cliprdr_packet_file_contents_request_new(fileContentsRequest);
 
 	if (!s)
@@ -778,7 +840,7 @@ cliprdr_client_file_contents_response(CliprdrClientContext* context,
 
 	if (!s)
 	{
-		WLog_ERR(TAG, "cliprdr_packet_new failed!");
+		WLog_ERR(TAG, "cliprdr_packet_file_contents_response_new failed!");
 		return ERROR_INTERNAL_ERROR;
 	}
 
@@ -1139,10 +1201,6 @@ BOOL VCAPITYPE VirtualChannelEntryEx(PCHANNEL_ENTRY_POINTS pEntryPoints, PVOID p
 	}
 
 	cliprdr->log = WLog_Get("com.freerdp.channels.cliprdr.client");
-	cliprdr->useLongFormatNames = TRUE;
-	cliprdr->streamFileClipEnabled = FALSE;
-	cliprdr->fileClipNoFilePaths = TRUE;
-	cliprdr->canLockClipData = FALSE;
 	WLog_Print(cliprdr->log, WLOG_DEBUG, "VirtualChannelEntryEx");
 	CopyMemory(&(cliprdr->channelEntryPoints), pEntryPoints,
 	           sizeof(CHANNEL_ENTRY_POINTS_FREERDP_EX));

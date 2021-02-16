@@ -32,6 +32,7 @@
 #define UWAC_API
 #endif
 
+typedef struct uwac_position UwacPosition;
 typedef struct uwac_size UwacSize;
 typedef struct uwac_display UwacDisplay;
 typedef struct uwac_output UwacOutput;
@@ -61,6 +62,15 @@ enum
 	UWAC_MOD_SHIFT_MASK = 0x01,
 	UWAC_MOD_ALT_MASK = 0x02,
 	UWAC_MOD_CONTROL_MASK = 0x04,
+	UWAC_MOD_CAPS_MASK = 0x08,
+	UWAC_MOD_NUM_MASK = 0x10,
+};
+
+/** @brief a position */
+struct uwac_position
+{
+	int x;
+	int y;
 };
 
 /** @brief a rectangle size measure */
@@ -83,6 +93,7 @@ enum
 	UWAC_EVENT_POINTER_BUTTONS,
 	UWAC_EVENT_POINTER_AXIS,
 	UWAC_EVENT_KEYBOARD_ENTER,
+	UWAC_EVENT_KEYBOARD_MODIFIERS,
 	UWAC_EVENT_KEY,
 	UWAC_EVENT_TOUCH_FRAME_BEGIN,
 	UWAC_EVENT_TOUCH_UP,
@@ -96,6 +107,7 @@ enum
 	UWAC_EVENT_CLIPBOARD_SELECT,
 	UWAC_EVENT_CLIPBOARD_OFFER,
 	UWAC_EVENT_OUTPUT_GEOMETRY,
+	UWAC_EVENT_POINTER_AXIS_DISCRETE
 };
 
 /** @brief window states */
@@ -135,6 +147,13 @@ struct uwac_keyboard_enter_event
 	UwacSeat* seat;
 };
 typedef struct uwac_keyboard_enter_event UwacKeyboardEnterLeaveEvent;
+
+struct uwac_keyboard_modifiers_event
+{
+	int type;
+	uint32_t modifiers;
+};
+typedef struct uwac_keyboard_modifiers_event UwacKeyboardModifiersEvent;
 
 struct uwac_pointer_enter_event
 {
@@ -268,6 +287,7 @@ union uwac_event {
 	UwacPointerButtonEvent mouse_button;
 	UwacPointerAxisEvent mouse_axis;
 	UwacKeyboardEnterLeaveEvent keyboard_enter_leave;
+	UwacKeyboardModifiersEvent keyboard_modifiers;
 	UwacClipboardEvent clipboard;
 	UwacKeyEvent key;
 	UwacTouchFrameBegin touchFrameBegin;
@@ -381,7 +401,7 @@ extern "C"
 	 * @param display the display to query
 	 * @return the number of outputs
 	 */
-	UWAC_API uint32_t UwacDisplayGetNbOutputs(UwacDisplay* display);
+	UWAC_API uint32_t UwacDisplayGetNbOutputs(const UwacDisplay* display);
 
 	/**
 	 *	retrieve a particular UwacOutput object
@@ -391,7 +411,7 @@ extern "C"
 	 * @return the given UwacOutput, NULL if something failed (so you should query
 	 *UwacDisplayGetLastError() to have the reason)
 	 */
-	UWAC_API UwacOutput* UwacDisplayGetOutput(UwacDisplay* display, int index);
+	UWAC_API const UwacOutput* UwacDisplayGetOutput(UwacDisplay* display, int index);
 
 	/**
 	 * retrieve the resolution of a given UwacOutput
@@ -400,7 +420,16 @@ extern "C"
 	 * @param resolution a pointer on the
 	 * @return UWAC_SUCCESS on success
 	 */
-	UWAC_API UwacReturnCode UwacOutputGetResolution(UwacOutput* output, UwacSize* resolution);
+	UWAC_API UwacReturnCode UwacOutputGetResolution(const UwacOutput* output, UwacSize* resolution);
+
+	/**
+	 * retrieve the position of a given UwacOutput
+	 *
+	 * @param output the UwacOutput
+	 * @param pos a pointer on the target position
+	 * @return UWAC_SUCCESS on success
+	 */
+	UWAC_API UwacReturnCode UwacOutputGetPosition(const UwacOutput* output, UwacPosition* pos);
 
 	/**
 	 *	creates a window using a SHM surface

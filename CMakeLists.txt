@@ -341,106 +341,99 @@ if(${CMAKE_C_COMPILER_ID} STREQUAL "Clang")
 	endif()
 endif()
 
+set(THREAD_PREFER_PTHREAD_FLAG TRUE)
+
+if(NOT IOS)
+	find_package(Threads REQUIRED)
+endif()
+
+if(NOT WIN32)
+	CHECK_SYMBOL_EXISTS(pthread_mutex_timedlock pthread.h HAVE_PTHREAD_MUTEX_TIMEDLOCK_SYMBOL)
+	if (NOT HAVE_PTHREAD_MUTEX_TIMEDLOCK_SYMBOL)
+		CHECK_LIBRARY_EXISTS(pthread pthread_mutex_timedlock "" HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIB)
+	endif (NOT HAVE_PTHREAD_MUTEX_TIMEDLOCK_SYMBOL)
+	if (NOT HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIB)
+		CHECK_LIBRARY_EXISTS(pthreads pthread_mutex_timedlock "" HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIBS)
+	endif (NOT HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIB)
+
+	if (HAVE_PTHREAD_MUTEX_TIMEDLOCK_SYMBOL OR HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIB OR HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIBS)
+		set(HAVE_PTHREAD_MUTEX_TIMEDLOCK ON)
+	endif (HAVE_PTHREAD_MUTEX_TIMEDLOCK_SYMBOL OR HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIB OR HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIBS)
+endif()
+
 # Enable address sanitizer, where supported and when required
 if(${CMAKE_C_COMPILER_ID} STREQUAL "Clang" OR CMAKE_COMPILER_IS_GNUCC)
-	set(CMAKE_REQUIRED_FLAGS_SAVED ${CMAKE_REQUIRED_FLAGS})
-
 	CHECK_C_COMPILER_FLAG ("-fno-omit-frame-pointer" fno-omit-frame-pointer)
 
+	if (fno-omit-frame-pointer)
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-omit-frame-pointer")
+	endif()
+
+	set(CMAKE_REQUIRED_LINK_OPTIONS_SAVED ${CMAKE_REQUIRED_LINK_OPTIONS})
 	file(WRITE ${CMAKE_BINARY_DIR}/foo.txt "")
 	if(WITH_SANITIZE_ADDRESS)
-		set(CMAKE_REQUIRED_FLAGS "-fsanitize=address")
+		list(APPEND CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=address")
 		CHECK_C_COMPILER_FLAG ("-fsanitize=address" fsanitize-address)
 		CHECK_C_COMPILER_FLAG ("-fsanitize-blacklist=${CMAKE_BINARY_DIR}/foo.txt" fsanitize-blacklist)
 		CHECK_C_COMPILER_FLAG ("-fsanitize-address-use-after-scope" fsanitize-address-use-after-scope)
-		unset(CMAKE_REQUIRED_FLAGS)
 
-		if(fsanitize-address)
-			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
-			set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")
-			set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
+		set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")
+		set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
 
-			if(fsanitize-blacklist)
-				set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-blacklist=${CMAKE_SOURCE_DIR}/scripts/blacklist-address-sanitizer.txt")
-			endif(fsanitize-blacklist)
+		if(fsanitize-blacklist)
+			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-blacklist=${CMAKE_SOURCE_DIR}/scripts/blacklist-address-sanitizer.txt")
+		endif(fsanitize-blacklist)
 
-			if(fsanitize-address-use-after-scope)
-				set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-address-use-after-scope")
-			endif(fsanitize-address-use-after-scope)
-
-		else(fsanitize-address)
-			message(WARNING "Missing support for address sanitizer!")
-		endif(fsanitize-address)
-
-		if(fno-omit-frame-pointer)
-			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-omit-frame-pointer")
-		endif()
+		if(fsanitize-address-use-after-scope)
+			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-address-use-after-scope")
+		endif(fsanitize-address-use-after-scope)
 	elseif(WITH_SANITIZE_MEMORY)
-		set(CMAKE_REQUIRED_FLAGS "-fsanitize=memory")
+		list(APPEND CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=memory")
 		CHECK_C_COMPILER_FLAG ("-fsanitize=memory" fsanitize-memory)
 		CHECK_C_COMPILER_FLAG ("-fsanitize-blacklist=${CMAKE_BINARY_DIR}/foo.txt" fsanitize-blacklist)
 		CHECK_C_COMPILER_FLAG ("-fsanitize-memory-use-after-dtor" fsanitize-memory-use-after-dtor)
 		CHECK_C_COMPILER_FLAG ("-fsanitize-memory-track-origins" fsanitize-memory-track-origins)
-		unset(CMAKE_REQUIRED_FLAGS)
 
-		if(fsanitize-memory)
-			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=memory")
-			set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=memory")
-			set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=memory")
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=memory")
+		set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=memory")
+		set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=memory")
 
-			if(fsanitize-blacklist)
-				set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-blacklist=${CMAKE_SOURCE_DIR}/scripts/blacklist-memory-sanitizer.txt")
-			endif(fsanitize-blacklist)
+		if(fsanitize-blacklist)
+			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-blacklist=${CMAKE_SOURCE_DIR}/scripts/blacklist-memory-sanitizer.txt")
+		endif(fsanitize-blacklist)
 
-			if (fsanitize-memory-use-after-dtor)
-				set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-memory-use-after-dtor")
-			endif(fsanitize-memory-use-after-dtor)
+		if (fsanitize-memory-use-after-dtor)
+			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-memory-use-after-dtor")
+		endif(fsanitize-memory-use-after-dtor)
 
-			if (fsanitize-memory-track-origins)
-				set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-memory-track-origins")
-			endif(fsanitize-memory-track-origins)
-
-		else(fsanitize-memory)
-			message(WARNING "Missing support for memory sanitizer!")
-		endif(fsanitize-memory)
-
-		if(fno-omit-frame-pointer)
-			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-omit-frame-pointer")
-		endif()
+		if (fsanitize-memory-track-origins)
+			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-memory-track-origins")
+		endif(fsanitize-memory-track-origins)
 	elseif(WITH_SANITIZE_THREAD)
+		list(APPEND CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=thread")
 		CHECK_C_COMPILER_FLAG ("-fsanitize=thread" fsanitize-thread)
 		CHECK_C_COMPILER_FLAG ("-fsanitize-blacklist=${CMAKE_BINARY_DIR}/foo.txt" fsanitize-blacklist)
-		unset(CMAKE_REQUIRED_FLAGS)
-		if(fsanitize-thread)
-			set(CMAKE_REQUIRED_FLAGS "-Werror -fsanitize=thread")
-			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread")
-			if(fsanitize-blacklist)
-				set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-blacklist=${CMAKE_SOURCE_DIR}/scripts/blacklist-thread-sanitizer.txt")
-			endif(fsanitize-blacklist)
-			set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread")
-			set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
-		else(fsanitize-thread)
-			message(WARNING "Missing support for thread sanitizer!")
-		endif(fsanitize-thread)
 
-		if(fno-omit-frame-pointer)
-			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-omit-frame-pointer")
-		endif()
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=thread")
+		if(fsanitize-blacklist)
+			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize-blacklist=${CMAKE_SOURCE_DIR}/scripts/blacklist-thread-sanitizer.txt")
+		endif(fsanitize-blacklist)
+		set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=thread")
+		set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
 	endif()
 
 	file(REMOVE ${CMAKE_BINARY_DIR}/foo.txt)
+	set(CMAKE_REQUIRED_LINK_OPTIONS ${CMAKE_REQUIRED_LINK_OPTIONS_SAVED})
 
 	if (WITH_NO_UNDEFINED)
-		set(CMAKE_REQUIRED_FLAGS "-Wl,--no-undefined")
 		CHECK_C_COMPILER_FLAG (-Wl,--no-undefined no-undefined)
-		unset(CMAKE_REQUIRED_FLAGS)
 
 		if(no-undefined)
+			SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-undefined" )
 			SET(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--no-undefined" )
 		endif()
 	endif()
-
-	set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_SAVED})
 endif()
 
 if(MSVC)
@@ -626,26 +619,6 @@ if(ANDROID)
 	endif(WITH_GPROF)
 endif()
 
-set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
-
-if(NOT IOS)
-	find_package(Threads REQUIRED)
-endif()
-
-if(NOT WIN32)
-	CHECK_SYMBOL_EXISTS(pthread_mutex_timedlock pthread.h HAVE_PTHREAD_MUTEX_TIMEDLOCK_SYMBOL)
-	if (NOT HAVE_PTHREAD_MUTEX_TIMEDLOCK_SYMBOL)
-		CHECK_LIBRARY_EXISTS(pthread pthread_mutex_timedlock "" HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIB)
-	endif (NOT HAVE_PTHREAD_MUTEX_TIMEDLOCK_SYMBOL)
-	if (NOT HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIB)
-		CHECK_LIBRARY_EXISTS(pthreads pthread_mutex_timedlock "" HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIBS)
-	endif (NOT HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIB)
-
-	if (HAVE_PTHREAD_MUTEX_TIMEDLOCK_SYMBOL OR HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIB OR HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIBS)
-		set(HAVE_PTHREAD_MUTEX_TIMEDLOCK ON)
-	endif (HAVE_PTHREAD_MUTEX_TIMEDLOCK_SYMBOL OR HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIB OR HAVE_PTHREAD_MUTEX_TIMEDLOCK_LIBS)
-endif()
-
 if(WITH_VALGRIND_MEMCHECK)
 	check_include_files(valgrind/memcheck.h HAVE_VALGRIND_MEMCHECK_H)
 else()
@@ -671,6 +644,10 @@ if(UNIX OR CYGWIN)
 	list(REMOVE_ITEM CMAKE_REQUIRED_LIBRARIES m)
 	set(X11_FEATURE_TYPE "RECOMMENDED")
 	set(WAYLAND_FEATURE_TYPE "RECOMMENDED")
+
+	include(CheckFunctionExists)
+
+	check_function_exists(getlogin_r HAVE_GETLOGIN_R)
 else()
 	set(X11_FEATURE_TYPE "DISABLED")
 	set(WAYLAND_FEATURE_TYPE "DISABLED")
@@ -936,10 +913,6 @@ if(MBEDTLS_FOUND)
 	add_definitions("-DWITH_MBEDTLS")
 endif()
 
-if (TARGET_ARCH MATCHES "sparc")
-	set(HAVE_ALIGNED_REQUIRED 1)
-endif()
-
 if (WITH_X264 OR WITH_OPENH264 OR WITH_MEDIA_FOUNDATION OR WITH_FFMPEG)
 	set(WITH_GFX_H264 ON)
 else()
@@ -976,14 +949,13 @@ else()
 	set(FREERDP_PROXY_PLUGINDIR "${PROXY_PLUGINDIR}")
 endif()
 
+# Declare we have config.h, generated later on.
+add_definitions("-DHAVE_CONFIG_H")
+
 # Include directories
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-# Configure files
-add_definitions("-DHAVE_CONFIG_H")
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 
 # RPATH configuration
 set(CMAKE_SKIP_BUILD_RPATH FALSE)
@@ -1099,6 +1071,9 @@ endif()
 if(WITH_SERVER)
 	add_subdirectory(server)
 endif()
+
+# Configure files - Add last so all symbols are defined
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 
 # Packaging
 

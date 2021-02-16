@@ -223,8 +223,15 @@ BOOL xf_picture_transform_required(xfContext* xfc)
 }
 #endif /* WITH_XRENDER defined */
 
-void xf_draw_screen(xfContext* xfc, int x, int y, int w, int h)
+void xf_draw_screen_(xfContext* xfc, int x, int y, int w, int h, const char* fkt, const char* file,
+                     int line)
 {
+	if (!xfc)
+	{
+		WLog_DBG(TAG, "[%s] called from [%s] xfc=%p", __FUNCTION__, fkt, xfc);
+		return;
+	}
+
 	if (w == 0 || h == 0)
 	{
 		WLog_WARN(TAG, "invalid width and/or height specified: w=%d h=%d", w, h);
@@ -292,8 +299,8 @@ static BOOL xf_desktop_resize(rdpContext* context)
 		XSetFunction(xfc->display, xfc->gc, GXcopy);
 		XSetFillStyle(xfc->display, xfc->gc, FillSolid);
 		XSetForeground(xfc->display, xfc->gc, 0);
-		XFillRectangle(xfc->display, xfc->drawable, xfc->gc, 0, 0, xfc->window->width,
-		               xfc->window->height);
+		XFillRectangle(xfc->display, xfc->drawable, xfc->gc, 0, 0, settings->DesktopWidth,
+		               settings->DesktopHeight);
 	}
 
 	return TRUE;
@@ -933,6 +940,7 @@ static int _xf_error_handler(Display* d, XErrorEvent* ev)
 	 * another window. This make xf_error_handler() a potential
 	 * debugger breakpoint.
 	 */
+
 	XUngrabKeyboard(d, CurrentTime);
 	return xf_error_handler(d, ev);
 }
@@ -1068,8 +1076,9 @@ static const button_map xf_button_flags[NUM_BUTTONS_MAPPED] = {
 	{ Button2, PTR_FLAGS_BUTTON3 },
 	{ Button3, PTR_FLAGS_BUTTON2 },
 	{ Button4, PTR_FLAGS_WHEEL | 0x78 },
-	{ Button5, PTR_FLAGS_WHEEL | PTR_FLAGS_WHEEL_NEGATIVE | 0x78 },
-	{ 6, PTR_FLAGS_HWHEEL | PTR_FLAGS_WHEEL_NEGATIVE | 0x78 },
+	/* Negative value is 9bit twos complement */
+	{ Button5, PTR_FLAGS_WHEEL | PTR_FLAGS_WHEEL_NEGATIVE | (0x100 - 0x78) },
+	{ 6, PTR_FLAGS_HWHEEL | PTR_FLAGS_WHEEL_NEGATIVE | (0x100 - 0x78) },
 	{ 7, PTR_FLAGS_HWHEEL | 0x78 },
 	{ 8, PTR_XFLAGS_BUTTON1 },
 	{ 9, PTR_XFLAGS_BUTTON2 },
@@ -1113,7 +1122,7 @@ static void xf_button_map_init(xfContext* xfc)
 	x11_map[111] = 112;
 
 	/* query system for actual remapping */
-	if (!xfc->context.settings->UnmapButtons)
+	if (xfc->context.settings->UnmapButtons)
 	{
 		xf_get_x11_button_map(xfc, x11_map);
 	}
@@ -1135,8 +1144,8 @@ static void xf_button_map_init(xfContext* xfc)
 			else
 			{
 				button_map* map = &xfc->button_map[pos++];
-				map->button = physical + Button1;
-				map->flags = get_flags_for_button(logical);
+				map->button = logical;
+				map->flags = get_flags_for_button(physical + Button1);
 			}
 		}
 	}
@@ -1174,9 +1183,16 @@ static BOOL xf_pre_connect(freerdp* instance)
 
 	if (!settings->Username && !settings->CredentialsFromStdin && !settings->SmartcardLogon)
 	{
-		char* login_name = getlogin();
+		int rc;
+		char login_name[MAX_PATH] = { 0 };
 
-		if (login_name)
+#ifdef HAVE_GETLOGIN_R
+		rc = getlogin_r(login_name, sizeof(login_name));
+#else
+		strncpy(login_name, getlogin(), sizeof(login_name));
+		rc = 0;
+#endif
+		if (rc == 0)
 		{
 			settings->Username = _strdup(login_name);
 
@@ -1823,6 +1839,7 @@ static BOOL xfreerdp_client_new(freerdp* instance, rdpContext* context)
 	instance->GatewayAuthenticate = client_cli_gw_authenticate;
 	instance->VerifyCertificateEx = client_cli_verify_certificate_ex;
 	instance->VerifyChangedCertificateEx = client_cli_verify_changed_certificate_ex;
+	instance->PresentGatewayMessage = client_cli_present_gateway_message;
 	instance->LogonErrorInfo = xf_logon_error_info;
 	PubSub_SubscribeTerminate(context->pubSub, xf_TerminateEventHandler);
 #ifdef WITH_XRENDER
@@ -1871,9 +1888,9 @@ static BOOL xfreerdp_client_new(freerdp* instance, rdpContext* context)
 
 	if ((xfc->_NET_SUPPORTED != None) && (xfc->_NET_SUPPORTING_WM_CHECK != None))
 	{
-		Atom actual_type;
-		int actual_format;
-		unsigned long nitems, after;
+		Atom actual_type = 0;
+		int actual_format = 0;
+		unsigned long nitems = 0, after = 0;
 		unsigned char* data = NULL;
 		int status = XGetWindowProperty(xfc->display, RootWindowOfScreen(xfc->screen),
 		                                xfc->_NET_SUPPORTED, 0, 1024, False, XA_ATOM, &actual_type,
@@ -1890,6 +1907,8 @@ static BOOL xfreerdp_client_new(freerdp* instance, rdpContext* context)
 			XFree(data);
 	}
 
+	xfc->_XWAYLAND_MAY_GRAB_KEYBOARD =
+	    XInternAtom(xfc->display, "_XWAYLAND_MAY_GRAB_KEYBOARD", False);
 	xfc->_NET_WM_ICON = XInternAtom(xfc->display, "_NET_WM_ICON", False);
 	xfc->_MOTIF_WM_HINTS = XInternAtom(xfc->display, "_MOTIF_WM_HINTS", False);
 	xfc->_NET_CURRENT_DESKTOP = XInternAtom(xfc->display, "_NET_CURRENT_DESKTOP", False);

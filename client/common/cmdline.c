@@ -454,7 +454,7 @@ BOOL freerdp_client_print_command_line_help_ex(int argc, char** argv,
 	printf("\n");
 	printf("Multimedia Redirection: /video\n");
 #ifdef CHANNEL_URBDRC_CLIENT
-	printf("USB Device Redirection: /usb:id,dev:054c:0268\n");
+	printf("USB Device Redirection: /usb:id:054c:0268#4669:6e6b,addr:04:0c\n");
 #endif
 	printf("\n");
 	printf("For Gateways, the https_proxy environment variable is respected:\n");
@@ -1403,14 +1403,14 @@ int freerdp_client_settings_command_line_status_print_ex(rdpSettings* settings, 
 	if (status == COMMAND_LINE_STATUS_PRINT_VERSION)
 	{
 		freerdp_client_print_version();
-		return COMMAND_LINE_STATUS_PRINT_VERSION;
+		goto out;
 	}
 
 	if (status == COMMAND_LINE_STATUS_PRINT_BUILDCONFIG)
 	{
 		freerdp_client_print_version();
 		freerdp_client_print_buildconfig();
-		return COMMAND_LINE_STATUS_PRINT_BUILDCONFIG;
+		goto out;
 	}
 	else if (status == COMMAND_LINE_STATUS_PRINT)
 	{
@@ -1465,15 +1465,18 @@ int freerdp_client_settings_command_line_status_print_ex(rdpSettings* settings, 
 			settings->ListMonitors = TRUE;
 		}
 
-		return COMMAND_LINE_STATUS_PRINT;
+		goto out;
 	}
 	else if (status < 0)
 	{
 		freerdp_client_print_command_line_help_ex(argc, argv, custom);
-		return COMMAND_LINE_STATUS_PRINT_HELP;
+		goto out;
 	}
 
-	return 0;
+out:
+	if (status <= COMMAND_LINE_STATUS_PRINT && status >= COMMAND_LINE_STATUS_PRINT_LAST)
+		return 0;
+	return status;
 }
 
 static BOOL ends_with(const char* str, const char* ext)
@@ -1567,9 +1570,9 @@ int freerdp_client_settings_parse_command_line_arguments(rdpSettings* settings, 
 	else
 		compatibility = freerdp_client_detect_command_line(argc - 1, &argv[1], &flags);
 
-	settings->ProxyHostname = NULL;
-	settings->ProxyUsername = NULL;
-	settings->ProxyPassword = NULL;
+	freerdp_settings_set_string(settings, FreeRDP_ProxyHostname, NULL);
+	freerdp_settings_set_string(settings, FreeRDP_ProxyUsername, NULL);
+	freerdp_settings_set_string(settings, FreeRDP_ProxyPassword, NULL);
 
 	if (compatibility)
 	{
@@ -1989,6 +1992,11 @@ int freerdp_client_settings_parse_command_line_arguments(rdpSettings* settings, 
 
 			settings->KeyboardLayout = (UINT32)val;
 		}
+		CommandLineSwitchCase(arg, "kbd-remap")
+		{
+			if (!copy_value(arg->Value, &settings->KeyboardRemappingList))
+				return COMMAND_LINE_ERROR_MEMORY;
+		}
 		CommandLineSwitchCase(arg, "kbd-lang")
 		{
 			LONGLONG val;
@@ -2089,7 +2097,8 @@ int freerdp_client_settings_parse_command_line_arguments(rdpSettings* settings, 
 		CommandLineSwitchCase(arg, "proxy")
 		{
 			/* initial value */
-			settings->ProxyType = PROXY_TYPE_HTTP;
+			if (!freerdp_settings_set_uint32(settings, FreeRDP_ProxyType, PROXY_TYPE_HTTP))
+				return COMMAND_LINE_ERROR_MEMORY;
 
 			if (arg->Flags & COMMAND_LINE_VALUE_PRESENT)
 			{
@@ -2104,12 +2113,23 @@ int freerdp_client_settings_parse_command_line_arguments(rdpSettings* settings, 
 					*p = '\0';
 
 					if (_stricmp("no_proxy", arg->Value) == 0)
-						settings->ProxyType = PROXY_TYPE_IGNORE;
-
+					{
+						if (!freerdp_settings_set_uint32(settings, FreeRDP_ProxyType,
+						                                 PROXY_TYPE_IGNORE))
+							return COMMAND_LINE_ERROR_MEMORY;
+					}
 					if (_stricmp("http", arg->Value) == 0)
-						settings->ProxyType = PROXY_TYPE_HTTP;
+					{
+						if (!freerdp_settings_set_uint32(settings, FreeRDP_ProxyType,
+						                                 PROXY_TYPE_HTTP))
+							return COMMAND_LINE_ERROR_MEMORY;
+					}
 					else if (_stricmp("socks5", arg->Value) == 0)
-						settings->ProxyType = PROXY_TYPE_SOCKS;
+					{
+						if (!freerdp_settings_set_uint32(settings, FreeRDP_ProxyType,
+						                                 PROXY_TYPE_SOCKS))
+							return COMMAND_LINE_ERROR_MEMORY;
+					}
 					else
 					{
 						WLog_ERR(TAG, "Only HTTP and SOCKS5 proxies supported by now");
@@ -2142,18 +2162,15 @@ int freerdp_client_settings_parse_command_line_arguments(rdpSettings* settings, 
 					}
 
 					*colonPtr = '\0';
-					settings->ProxyUsername = _strdup(arg->Value);
-
-					if (!settings->ProxyUsername)
+					if (!freerdp_settings_set_string(settings, FreeRDP_ProxyUsername, arg->Value))
 					{
 						WLog_ERR(TAG, "unable to allocate proxy username");
 						return COMMAND_LINE_ERROR_MEMORY;
 					}
 
 					*atPtr = '\0';
-					settings->ProxyPassword = _strdup(colonPtr + 1);
 
-					if (!settings->ProxyPassword)
+					if (!freerdp_settings_set_string(settings, FreeRDP_ProxyPassword, colonPtr + 1))
 					{
 						WLog_ERR(TAG, "unable to allocate proxy password");
 						return COMMAND_LINE_ERROR_MEMORY;
@@ -2172,11 +2189,16 @@ int freerdp_client_settings_parse_command_line_arguments(rdpSettings* settings, 
 						return COMMAND_LINE_ERROR_UNEXPECTED_VALUE;
 
 					length = (size_t)(p - arg->Value);
-					settings->ProxyPort = (UINT16)val;
-					settings->ProxyHostname = (char*)malloc(length + 1);
-					strncpy(settings->ProxyHostname, arg->Value, length);
-					settings->ProxyHostname[length] = '\0';
+					if (!freerdp_settings_set_uint16(settings, FreeRDP_ProxyPort, val))
+						return FALSE;
+					*p = '\0';
 				}
+
+				p = strchr(arg->Value, '/');
+				if (p)
+					*p = '\0';
+				if (!freerdp_settings_set_string(settings, FreeRDP_ProxyHostname, arg->Value))
+					return FALSE;
 			}
 			else
 			{
@@ -2326,7 +2348,36 @@ int freerdp_client_settings_parse_command_line_arguments(rdpSettings* settings, 
 		}
 		CommandLineSwitchCase(arg, "clipboard")
 		{
-			settings->RedirectClipboard = enable;
+			if (arg->Value == BoolValueTrue || arg->Value == BoolValueFalse)
+			{
+				settings->RedirectClipboard = (arg->Value == BoolValueTrue);
+			}
+			else
+			{
+				int rc = 0;
+				char** p;
+				size_t count, x;
+				p = CommandLineParseCommaSeparatedValues(arg->Value, &count);
+				for (x = 0; (x < count) && (rc == 0); x++)
+				{
+					const char usesel[14] = "use-selection:";
+
+					const char* cur = p[x];
+					if (_strnicmp(usesel, cur, sizeof(usesel)) == 0)
+					{
+						const char* val = &cur[sizeof(usesel)];
+						if (!copy_value(val, &settings->XSelectionAtom))
+							rc = COMMAND_LINE_ERROR_MEMORY;
+						settings->RedirectClipboard = TRUE;
+					}
+					else
+						rc = COMMAND_LINE_ERROR_UNEXPECTED_VALUE;
+				}
+				free(p);
+
+				if (rc)
+					return rc;
+			}
 		}
 		CommandLineSwitchCase(arg, "shell")
 		{
@@ -2853,6 +2904,10 @@ int freerdp_client_settings_parse_command_line_arguments(rdpSettings* settings, 
 		{
 			settings->GrabKeyboard = enable;
 		}
+		CommandLineSwitchCase(arg, "grab-mouse")
+		{
+			settings->GrabMouse = enable;
+		}
 		CommandLineSwitchCase(arg, "unmap-buttons")
 		{
 			settings->UnmapButtons = enable;
@@ -3186,6 +3241,89 @@ int freerdp_client_settings_parse_command_line_arguments(rdpSettings* settings, 
 			if (!settings->SmartcardLogon)
 				activate_smartcard_logon_rdp(settings);
 		}
+
+		CommandLineSwitchCase(arg, "tune")
+		{
+			size_t x, count;
+			char** p = CommandLineParseCommaSeparatedValuesEx("tune", arg->Value, &count);
+			if (!p)
+				return COMMAND_LINE_ERROR;
+			for (x = 1; x < count; x++)
+			{
+				char* cur = p[x];
+				char* sep = strchr(cur, ':');
+				if (!sep)
+				{
+					free(p);
+					return COMMAND_LINE_ERROR;
+				}
+				*sep++ = '\0';
+				if (!freerdp_settings_set_value_for_name(settings, cur, sep))
+				{
+					free(p);
+					return COMMAND_LINE_ERROR;
+				}
+			}
+
+			free(p);
+		}
+		CommandLineSwitchCase(arg, "tune-list")
+		{
+			size_t x;
+			SSIZE_T type = 0;
+
+			printf("%s\t%50s\t%s\t%s", "<index>", "<key>", "<type>", "<default value>\n");
+			for (x = 0; x < FreeRDP_Settings_StableAPI_MAX; x++)
+			{
+				const char* name = freerdp_settings_get_name_for_key(x);
+				type = freerdp_settings_get_type_for_key(x);
+
+				switch (type)
+				{
+					case RDP_SETTINGS_TYPE_BOOL:
+						printf("%" PRIuz "\t%50s\tBOOL\t%s\n", x, name,
+						       freerdp_settings_get_bool(settings, x) ? "TRUE" : "FALSE");
+						break;
+					case RDP_SETTINGS_TYPE_UINT16:
+						printf("%" PRIuz "\t%50s\tUINT16\t%" PRIu16 "\n", x, name,
+						       freerdp_settings_get_uint16(settings, x));
+						break;
+					case RDP_SETTINGS_TYPE_INT16:
+						printf("%" PRIuz "\t%50s\tINT16\t%" PRId16 "\n", x, name,
+						       freerdp_settings_get_int16(settings, x));
+						break;
+					case RDP_SETTINGS_TYPE_UINT32:
+						printf("%" PRIuz "\t%50s\tUINT32\t%" PRIu32 "\n", x, name,
+						       freerdp_settings_get_uint32(settings, x));
+						break;
+					case RDP_SETTINGS_TYPE_INT32:
+						printf("%" PRIuz "\t%50s\tINT32\t%" PRId32 "\n", x, name,
+						       freerdp_settings_get_int32(settings, x));
+						break;
+					case RDP_SETTINGS_TYPE_UINT64:
+						printf("%" PRIuz "\t%50s\tUINT64\t%" PRIu64 "\n", x, name,
+						       freerdp_settings_get_uint64(settings, x));
+						break;
+					case RDP_SETTINGS_TYPE_INT64:
+						printf("%" PRIuz "\t%50s\tINT64\t%" PRId64 "\n", x, name,
+						       freerdp_settings_get_int64(settings, x));
+						break;
+					case RDP_SETTINGS_TYPE_STRING:
+						printf("%" PRIuz "\t%50s\tSTRING\t%s"
+						       "\n",
+						       x, name, freerdp_settings_get_string(settings, x));
+						break;
+					case RDP_SETTINGS_TYPE_POINTER:
+						printf("%" PRIuz "\t%50s\tPOINTER\t%p"
+						       "\n",
+						       x, name, freerdp_settings_get_pointer(settings, x));
+						break;
+					default:
+						break;
+				}
+			}
+			return COMMAND_LINE_STATUS_PRINT;
+		}
 		CommandLineSwitchDefault(arg)
 		{
 		}
@@ -3265,8 +3403,6 @@ int freerdp_client_settings_parse_command_line_arguments(rdpSettings* settings, 
 	if (settings->RemoteFxCodec || settings->NSCodec || settings->SupportGraphicsPipeline)
 	{
 		settings->FastPathOutput = TRUE;
-		settings->LargePointerFlag =
-		    0x0002; /* (LARGE_POINTER_FLAG_96x96 | LARGE_POINTER_FLAG_384x384); */
 		settings->FrameMarkerCommandEnabled = TRUE;
 		settings->ColorDepth = 32;
 	}
@@ -3419,8 +3555,9 @@ BOOL freerdp_client_load_addins(rdpChannels* channels, rdpSettings* settings)
 			BOOL success;
 			const char* name = NULL;
 			const char* drive = tok;
-			char* start = strtok(tok, "(");
-			char* end = strtok(NULL, ")");
+			char* subcontext = NULL;
+			char* start = strtok_s(tok, "(", &subcontext);
+			char* end = strtok_s(NULL, ")", &subcontext);
 			if (start && end)
 				name = end;
 

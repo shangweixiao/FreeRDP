@@ -137,6 +137,7 @@ struct uwac_output
 	bool doneNeeded;
 	bool doneReceived;
 
+	UwacPosition position;
 	UwacSize resolution;
 	int transform;
 	int scale;
@@ -179,6 +180,8 @@ struct uwac_seat
 		xkb_mod_mask_t control_mask;
 		xkb_mod_mask_t alt_mask;
 		xkb_mod_mask_t shift_mask;
+		xkb_mod_mask_t caps_mask;
+		xkb_mod_mask_t num_mask;
 	} xkb;
 	uint32_t modifiers;
 	int32_t repeat_rate_sec, repeat_rate_nsec;
@@ -217,6 +220,7 @@ struct uwac_buffer
 #endif
 	struct wl_buffer* wayland_buffer;
 	void* data;
+	size_t size;
 };
 typedef struct uwac_buffer UwacBuffer;
 
@@ -233,7 +237,8 @@ struct uwac_window
 
 	struct wl_region* opaque_region;
 	struct wl_region* input_region;
-	UwacBuffer *drawingBuffer, *pendingBuffer;
+	SSIZE_T drawingBufferIdx;
+	SSIZE_T pendingBufferIdx;
 	struct wl_surface* surface;
 	struct wl_shell_surface* shell_surface;
 	struct xdg_surface* xdg_surface;

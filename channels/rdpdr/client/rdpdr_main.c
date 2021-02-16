@@ -204,7 +204,6 @@ LRESULT CALLBACK hotplug_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 
 									drive.Type = RDPDR_DTYP_FILESYSTEM;
 									drive.Path = drive_path;
-									drive_path[1] = '\0';
 									drive.automount = TRUE;
 									drive.Name = drive_name;
 									devman_load_device_service(rdpdr->devman,
@@ -580,15 +579,6 @@ static DWORD WINAPI drive_hotplug_thread_func(LPVOID arg)
 
 #else
 
-#include <mntent.h>
-#define MAX_USB_DEVICES 100
-
-typedef struct _hotplug_dev
-{
-	char* path;
-	BOOL to_add;
-} hotplug_dev;
-
 static const char* automountLocations[] = { "/run/user/%lu/gvfs", "/run/media/%s", "/media/%s",
 	                                        "/media", "/mnt" };
 
@@ -598,7 +588,14 @@ static BOOL isAutomountLocation(const char* path)
 	size_t x;
 	char buffer[MAX_PATH];
 	uid_t uid = getuid();
-	const char* uname = getlogin();
+	char uname[MAX_PATH] = { 0 };
+
+#ifndef HAVE_GETLOGIN_R
+	strncpy(uname, getlogin(), sizeof(uname));
+#else
+	if (getlogin_r(uname, sizeof(uname)) != 0)
+		return FALSE;
+#endif
 
 	if (!path)
 		return FALSE;
@@ -638,6 +635,143 @@ static BOOL isAutomountLocation(const char* path)
 	return FALSE;
 }
 
+#define MAX_USB_DEVICES 100
+
+typedef struct _hotplug_dev
+{
+	char* path;
+	BOOL to_add;
+} hotplug_dev;
+
+static void handle_mountpoint(hotplug_dev* dev_array, size_t* size, const char* mountpoint)
+{
+	if (!mountpoint)
+		return;
+	/* copy hotpluged device mount point to the dev_array */
+	if (isAutomountLocation(mountpoint) && (*size < MAX_USB_DEVICES))
+	{
+		dev_array[*size].path = _strdup(mountpoint);
+		dev_array[*size + 1].to_add = TRUE;
+		(*size)++;
+	}
+}
+
+#ifdef __sun
+#include <sys/mnttab.h>
+static UINT handle_platform_mounts_sun(hotplug_dev* dev_array, size_t* size)
+{
+	FILE* f;
+	struct mnttab ent;
+	f = fopen("/etc/mnttab", "r");
+	if (f == NULL)
+	{
+		WLog_ERR(TAG, "fopen failed!");
+		return ERROR_OPEN_FAILED;
+	}
+	while (getmntent(f, &ent) == 0)
+	{
+		handle_mountpoint(dev_array, size, ent.mnt_mountp);
+	}
+	fclose(f);
+	return ERROR_SUCCESS;
+}
+#endif
+
+#if defined(__FreeBSD__) || defined(__OpenBSD__)
+#include <sys/mount.h>
+static UINT handle_platform_mounts_bsd(hotplug_dev* dev_array, size_t* size)
+{
+	int mntsize;
+	size_t idx;
+	struct statfs* mntbuf = NULL;
+
+	mntsize = getmntinfo(&mntbuf, MNT_NOWAIT);
+	if (!mntsize)
+	{
+		/* TODO: handle 'errno' */
+		WLog_ERR(TAG, "getmntinfo failed!");
+		return ERROR_OPEN_FAILED;
+	}
+	for (idx = 0; idx < (size_t)mntsize; idx++)
+	{
+		handle_mountpoint(dev_array, size, mntbuf[idx].f_mntonname);
+	}
+	free(mntbuf);
+	return ERROR_SUCCESS;
+}
+#endif
+
+#if defined(__LINUX__) || defined(__linux__)
+#include <mntent.h>
+static UINT handle_platform_mounts_linux(hotplug_dev* dev_array, size_t* size)
+{
+	FILE* f;
+	struct mntent* ent;
+	f = fopen("/proc/mounts", "r");
+	if (f == NULL)
+	{
+		WLog_ERR(TAG, "fopen failed!");
+		return ERROR_OPEN_FAILED;
+	}
+	while ((ent = getmntent(f)) != NULL)
+	{
+		handle_mountpoint(dev_array, size, ent->mnt_dir);
+	}
+	fclose(f);
+	return ERROR_SUCCESS;
+}
+#endif
+
+static UINT handle_platform_mounts(hotplug_dev* dev_array, size_t* size)
+{
+#ifdef __sun
+	return handle_platform_mounts_sun(dev_array, size);
+#elif defined(__FreeBSD__) || defined(__OpenBSD__)
+	return handle_platform_mounts_bsd(dev_array, size);
+#elif defined(__LINUX__) || defined(__linux__)
+	return handle_platform_mounts_linux(dev_array, size);
+#endif
+	return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+static BOOL device_already_plugged(rdpdrPlugin* rdpdr, const hotplug_dev* device)
+{
+	BOOL rc = FALSE;
+	int count, x;
+	ULONG_PTR* keys = NULL;
+	WCHAR* path = NULL;
+	int status;
+
+	if (!rdpdr || !device)
+		return TRUE;
+	if (!device->to_add)
+		return TRUE;
+
+	status = ConvertToUnicode(CP_UTF8, 0, device->path, -1, &path, 0);
+	if (status <= 0)
+		return TRUE;
+
+	ListDictionary_Lock(rdpdr->devman->devices);
+	count = ListDictionary_GetKeys(rdpdr->devman->devices, &keys);
+	for (x = 0; x < count; x++)
+	{
+		DEVICE_DRIVE_EXT* device_ext =
+		    (DEVICE_DRIVE_EXT*)ListDictionary_GetItemValue(rdpdr->devman->devices, (void*)keys[x]);
+
+		if (!device_ext || (device_ext->device.type != RDPDR_DTYP_FILESYSTEM) || !device_ext->path)
+			continue;
+		if (_wcscmp(device_ext->path, path) == 0)
+		{
+			rc = TRUE;
+			break;
+		}
+	}
+	free(keys);
+	free(path);
+	ListDictionary_Unlock(rdpdr->devman->devices);
+	return rc;
+}
+
 /**
  * Function description
  *
@@ -645,39 +779,16 @@ static BOOL isAutomountLocation(const char* path)
  */
 static UINT handle_hotplug(rdpdrPlugin* rdpdr)
 {
-	FILE* f;
 	hotplug_dev dev_array[MAX_USB_DEVICES] = { 0 };
 	size_t i;
 	size_t size = 0;
 	int count, j;
-	struct mntent* ent;
 	ULONG_PTR* keys = NULL;
 	UINT32 ids[1];
-	UINT error = 0;
+	UINT error = ERROR_SUCCESS;
 
-	f = fopen("/proc/mounts", "r");
+	error = handle_platform_mounts(dev_array, &size);
 
-	if (f == NULL)
-	{
-		WLog_ERR(TAG, "fopen failed!");
-		return ERROR_OPEN_FAILED;
-	}
-
-	while ((ent = getmntent(f)) != NULL)
-	{
-		/* Copy the line, path must obviously be shorter */
-		const char* path = ent->mnt_dir;
-		if (!path)
-			continue;
-		/* copy hotpluged device mount point to the dev_array */
-		if (isAutomountLocation(path) && (size <= MAX_USB_DEVICES))
-		{
-			dev_array[size].path = _strdup(path);
-			dev_array[size++].to_add = TRUE;
-		}
-	}
-
-	fclose(f);
 	/* delete removed devices */
 	count = ListDictionary_GetKeys(rdpdr->devman->devices, &keys);
 
@@ -731,7 +842,7 @@ static UINT handle_hotplug(rdpdrPlugin* rdpdr)
 	/* add new devices */
 	for (i = 0; i < size; i++)
 	{
-		if (dev_array[i].to_add)
+		if (!device_already_plugged(rdpdr, &dev_array[i]))
 		{
 			RDPDR_DRIVE drive = { 0 };
 			char* name;
@@ -755,6 +866,7 @@ static UINT handle_hotplug(rdpdrPlugin* rdpdr)
 				WLog_ERR(TAG, "devman_load_device_service failed!");
 				goto cleanup;
 			}
+			error = ERROR_DISK_CHANGE;
 		}
 	}
 
@@ -780,61 +892,30 @@ static void first_hotplug(rdpdrPlugin* rdpdr)
 static DWORD WINAPI drive_hotplug_thread_func(LPVOID arg)
 {
 	rdpdrPlugin* rdpdr;
-	int mfd;
-	fd_set rfds;
-	struct timeval tv;
-	int rv;
 	UINT error = 0;
 	DWORD status;
 	rdpdr = (rdpdrPlugin*)arg;
-	mfd = open("/proc/mounts", O_RDONLY, 0);
 
-	if (mfd < 0)
+	while ((status = WaitForSingleObject(rdpdr->stopEvent, 1000)) == WAIT_TIMEOUT)
 	{
-		WLog_ERR(TAG, "ERROR: Unable to open /proc/mounts.");
-		error = ERROR_INTERNAL_ERROR;
-		goto out;
-	}
-
-	FD_ZERO(&rfds);
-	FD_SET(mfd, &rfds);
-	tv.tv_sec = 1;
-	tv.tv_usec = 0;
-
-	while ((rv = select(mfd + 1, NULL, NULL, &rfds, &tv)) >= 0)
-	{
-		status = WaitForSingleObject(rdpdr->stopEvent, 0);
-
-		if (status == WAIT_FAILED)
+		error = handle_hotplug(rdpdr);
+		switch (error)
 		{
-			error = GetLastError();
-			WLog_ERR(TAG, "WaitForSingleObject failed with error %" PRIu32 "!", error);
-			goto out;
-		}
-
-		if (status == WAIT_OBJECT_0)
-			break;
-
-		if (FD_ISSET(mfd, &rfds))
-		{
-			/* file /proc/mounts changed, handle this */
-			if ((error = handle_hotplug(rdpdr)))
-			{
+			case ERROR_DISK_CHANGE:
+				rdpdr_send_device_list_announce_request(rdpdr, TRUE);
+				break;
+			case CHANNEL_RC_OK:
+			case ERROR_OPEN_FAILED:
+			case ERROR_CALL_NOT_IMPLEMENTED:
+				break;
+			default:
 				WLog_ERR(TAG, "handle_hotplug failed with error %" PRIu32 "!", error);
 				goto out;
-			}
-			else
-				rdpdr_send_device_list_announce_request(rdpdr, TRUE);
 		}
-
-		FD_ZERO(&rfds);
-		FD_SET(mfd, &rfds);
-		tv.tv_sec = 1;
-		tv.tv_usec = 0;
 	}
 
 out:
-
+	error = GetLastError();
 	if (error && rdpdr->rdpcontext)
 		setChannelError(rdpdr->rdpcontext, error, "drive_hotplug_thread_func reported an error");
 
@@ -1616,6 +1697,7 @@ static void queue_free(void* obj)
 static UINT rdpdr_virtual_channel_event_connected(rdpdrPlugin* rdpdr, LPVOID pData,
                                                   UINT32 dataLength)
 {
+	wObject* obj;
 	UINT32 status;
 	status = rdpdr->channelEntryPoints.pVirtualChannelOpenEx(rdpdr->InitHandle, &rdpdr->OpenHandle,
 	                                                         rdpdr->channelDef.name,
@@ -1636,7 +1718,10 @@ static UINT rdpdr_virtual_channel_event_connected(rdpdrPlugin* rdpdr, LPVOID pDa
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
-	rdpdr->queue->object.fnObjectFree = queue_free;
+	obj = MessageQueue_Object(rdpdr->queue);
+	if (!obj)
+		return ERROR_INTERNAL_ERROR;
+	obj->fnObjectFree = queue_free;
 
 	if (!(rdpdr->thread =
 	          CreateThread(NULL, 0, rdpdr_virtual_channel_client_thread, (void*)rdpdr, 0, NULL)))

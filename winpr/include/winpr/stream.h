@@ -74,60 +74,64 @@ extern "C"
 			Stream_Seek(_s, sizeof(_t)); \
 	} while (0)
 
-#define _stream_read_n16_le(_t, _s, _v, _p)                                    \
-	do                                                                         \
-	{                                                                          \
-		(_v) = (_t)(*(_s)->pointer) + (_t)(((_t)(*((_s)->pointer + 1))) << 8); \
-		if (_p)                                                                \
-			Stream_Seek(_s, sizeof(_t));                                       \
+#define _stream_read_n16_le(_t, _s, _v, _p)                                      \
+	do                                                                           \
+	{                                                                            \
+		(_v) = (_t)((*(_s)->pointer) + (((UINT16)(*((_s)->pointer + 1))) << 8)); \
+		if (_p)                                                                  \
+			Stream_Seek(_s, sizeof(_t));                                         \
 	} while (0)
 
-#define _stream_read_n16_be(_t, _s, _v, _p)                                    \
-	do                                                                         \
-	{                                                                          \
-		(_v) = (_t)(((_t)(*(_s)->pointer)) << 8) + (_t)(*((_s)->pointer + 1)); \
-		if (_p)                                                                \
-			Stream_Seek(_s, sizeof(_t));                                       \
-	} while (0)
-
-#define _stream_read_n32_le(_t, _s, _v, _p)                                                 \
-	do                                                                                      \
-	{                                                                                       \
-		(_v) = (_t)(*(_s)->pointer) + (((_t)(*((_s)->pointer + 1))) << 8) +                 \
-		       (((_t)(*((_s)->pointer + 2))) << 16) + (((_t)(*((_s)->pointer + 3))) << 24); \
-		if (_p)                                                                             \
-			Stream_Seek(_s, sizeof(_t));                                                    \
-	} while (0)
-
-#define _stream_read_n32_be(_t, _s, _v, _p)                                              \
+#define _stream_read_n16_be(_t, _s, _v, _p)                                              \
 	do                                                                                   \
 	{                                                                                    \
-		(_v) = (((_t)(*((_s)->pointer))) << 24) + (((_t)(*((_s)->pointer + 1))) << 16) + \
-		       (((_t)(*((_s)->pointer + 2))) << 8) + (((_t)(*((_s)->pointer + 3))));     \
+		(_v) = (_t)((((UINT16)(*(_s)->pointer)) << 8) + (UINT16)(*((_s)->pointer + 1))); \
 		if (_p)                                                                          \
 			Stream_Seek(_s, sizeof(_t));                                                 \
 	} while (0)
 
-#define _stream_read_n64_le(_t, _s, _v, _p)                                                  \
-	do                                                                                       \
-	{                                                                                        \
-		(_v) = (_t)(*(_s)->pointer) + (((_t)(*((_s)->pointer + 1))) << 8) +                  \
-		       (((_t)(*((_s)->pointer + 2))) << 16) + (((_t)(*((_s)->pointer + 3))) << 24) + \
-		       (((_t)(*((_s)->pointer + 4))) << 32) + (((_t)(*((_s)->pointer + 5))) << 40) + \
-		       (((_t)(*((_s)->pointer + 6))) << 48) + (((_t)(*((_s)->pointer + 7))) << 56);  \
-		if (_p)                                                                              \
-			Stream_Seek(_s, sizeof(_t));                                                     \
+#define _stream_read_n32_le(_t, _s, _v, _p)                                              \
+	do                                                                                   \
+	{                                                                                    \
+		(_v) = (_t)((UINT32)(*(_s)->pointer) + (((UINT32)(*((_s)->pointer + 1))) << 8) + \
+		            (((UINT32)(*((_s)->pointer + 2))) << 16) +                           \
+		            ((((UINT32) * ((_s)->pointer + 3))) << 24));                         \
+		if (_p)                                                                          \
+			Stream_Seek(_s, sizeof(_t));                                                 \
 	} while (0)
 
-#define _stream_read_n64_be(_t, _s, _v, _p)                                                  \
-	do                                                                                       \
-	{                                                                                        \
-		(_v) = (((_t)(*((_s)->pointer))) << 56) + (((_t)(*((_s)->pointer + 1))) << 48) +     \
-		       (((_t)(*((_s)->pointer + 2))) << 40) + (((_t)(*((_s)->pointer + 3))) << 32) + \
-		       (((_t)(*((_s)->pointer + 4))) << 24) + (((_t)(*((_s)->pointer + 5))) << 16) + \
-		       (((_t)(*((_s)->pointer + 6))) << 8) + (((_t)(*((_s)->pointer + 7))));         \
-		if (_p)                                                                              \
-			Stream_Seek(_s, sizeof(_t));                                                     \
+#define _stream_read_n32_be(_t, _s, _v, _p)                                                        \
+	do                                                                                             \
+	{                                                                                              \
+		(_v) = (_t)(((((UINT32) * ((_s)->pointer))) << 24) +                                       \
+		            (((UINT32)(*((_s)->pointer + 1))) << 16) +                                     \
+		            (((UINT32)(*((_s)->pointer + 2))) << 8) + (((UINT32)(*((_s)->pointer + 3))))); \
+		if (_p)                                                                                    \
+			Stream_Seek(_s, sizeof(_t));                                                           \
+	} while (0)
+
+#define _stream_read_n64_le(_t, _s, _v, _p)                                                       \
+	do                                                                                            \
+	{                                                                                             \
+		(_v) = (_t)(                                                                              \
+		    (UINT64)(*(_s)->pointer) + (((UINT64)(*((_s)->pointer + 1))) << 8) +                  \
+		    (((UINT64)(*((_s)->pointer + 2))) << 16) + (((UINT64)(*((_s)->pointer + 3))) << 24) + \
+		    (((UINT64)(*((_s)->pointer + 4))) << 32) + (((UINT64)(*((_s)->pointer + 5))) << 40) + \
+		    (((UINT64)(*((_s)->pointer + 6))) << 48) + (((UINT64)(*((_s)->pointer + 7))) << 56)); \
+		if (_p)                                                                                   \
+			Stream_Seek(_s, sizeof(_t));                                                          \
+	} while (0)
+
+#define _stream_read_n64_be(_t, _s, _v, _p)                                                       \
+	do                                                                                            \
+	{                                                                                             \
+		(_v) = (_t)(                                                                              \
+		    (((UINT64)(*((_s)->pointer))) << 56) + (((UINT64)(*((_s)->pointer + 1))) << 48) +     \
+		    (((UINT64)(*((_s)->pointer + 2))) << 40) + (((UINT64)(*((_s)->pointer + 3))) << 32) + \
+		    (((UINT64)(*((_s)->pointer + 4))) << 24) + (((UINT64)(*((_s)->pointer + 5))) << 16) + \
+		    (((UINT64)(*((_s)->pointer + 6))) << 8) + (((UINT64)(*((_s)->pointer + 7)))));        \
+		if (_p)                                                                                   \
+			Stream_Seek(_s, sizeof(_t));                                                          \
 	} while (0)
 
 #define Stream_Read_UINT8(_s, _v) _stream_read_n8(UINT8, _s, _v, TRUE)
@@ -394,21 +398,6 @@ extern "C"
 
 	/* StreamPool */
 
-	struct _wStreamPool
-	{
-		int aSize;
-		int aCapacity;
-		wStream** aArray;
-
-		int uSize;
-		int uCapacity;
-		wStream** uArray;
-
-		CRITICAL_SECTION lock;
-		BOOL synchronized;
-		size_t defaultSize;
-	};
-
 	WINPR_API wStream* StreamPool_Take(wStreamPool* pool, size_t size);
 	WINPR_API void StreamPool_Return(wStreamPool* pool, wStream* s);
 
@@ -416,13 +405,13 @@ extern "C"
 	WINPR_API void Stream_Release(wStream* s);
 
 	WINPR_API wStream* StreamPool_Find(wStreamPool* pool, BYTE* ptr);
-	WINPR_API void StreamPool_AddRef(wStreamPool* pool, BYTE* ptr);
-	WINPR_API void StreamPool_Release(wStreamPool* pool, BYTE* ptr);
 
 	WINPR_API void StreamPool_Clear(wStreamPool* pool);
 
 	WINPR_API wStreamPool* StreamPool_New(BOOL synchronized, size_t defaultSize);
 	WINPR_API void StreamPool_Free(wStreamPool* pool);
+
+	WINPR_API char* StreamPool_GetStatistics(wStreamPool* pool, char* buffer, size_t size);
 
 #ifdef __cplusplus
 }

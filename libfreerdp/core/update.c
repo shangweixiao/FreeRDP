@@ -355,10 +355,15 @@ fail:
 	return NULL;
 }
 
-static BOOL _update_read_pointer_color(wStream* s, POINTER_COLOR_UPDATE* pointer_color, BYTE xorBpp)
+static BOOL _update_read_pointer_color(wStream* s, POINTER_COLOR_UPDATE* pointer_color, BYTE xorBpp,
+                                       UINT32 flags)
 {
 	BYTE* newMask;
 	UINT32 scanlineSize;
+	UINT32 max = 32;
+
+	if (flags & LARGE_POINTER_FLAG_96x96)
+		max = 96;
 
 	if (!pointer_color)
 		goto fail;
@@ -376,12 +381,12 @@ static BOOL _update_read_pointer_color(wStream* s, POINTER_COLOR_UPDATE* pointer
 	 *  Pointer Capability Set (section 2.2.7.2.7). If the LARGE_POINTER_FLAG was not
 	 *  set, the maximum allowed pointer width/height is 32 pixels.
 	 *
-	 *  So we check for a maximum of 96 for CVE-2014-0250.
+	 *  So we check for a maximum for CVE-2014-0250.
 	 */
 	Stream_Read_UINT16(s, pointer_color->width);  /* width (2 bytes) */
 	Stream_Read_UINT16(s, pointer_color->height); /* height (2 bytes) */
 
-	if ((pointer_color->width > 96) || (pointer_color->height > 96))
+	if ((pointer_color->width > max) || (pointer_color->height > max))
 		goto fail;
 
 	Stream_Read_UINT16(s, pointer_color->lengthAndMask); /* lengthAndMask (2 bytes) */
@@ -483,7 +488,8 @@ POINTER_COLOR_UPDATE* update_read_pointer_color(rdpUpdate* update, wStream* s, B
 	if (!pointer_color)
 		goto fail;
 
-	if (!_update_read_pointer_color(s, pointer_color, xorBpp))
+	if (!_update_read_pointer_color(s, pointer_color, xorBpp,
+	                                update->context->settings->LargePointerFlag))
 		goto fail;
 
 	return pointer_color;
@@ -500,7 +506,7 @@ static BOOL _update_read_pointer_large(wStream* s, POINTER_LARGE_UPDATE* pointer
 	if (!pointer)
 		goto fail;
 
-	if (Stream_GetRemainingLength(s) < 14)
+	if (Stream_GetRemainingLength(s) < 20)
 		goto fail;
 
 	Stream_Read_UINT16(s, pointer->xorBpp);
@@ -514,8 +520,8 @@ static BOOL _update_read_pointer_large(wStream* s, POINTER_LARGE_UPDATE* pointer
 	if ((pointer->width > 384) || (pointer->height > 384))
 		goto fail;
 
-	Stream_Read_UINT16(s, pointer->lengthAndMask); /* lengthAndMask (2 bytes) */
-	Stream_Read_UINT16(s, pointer->lengthXorMask); /* lengthXorMask (2 bytes) */
+	Stream_Read_UINT32(s, pointer->lengthAndMask); /* lengthAndMask (4 bytes) */
+	Stream_Read_UINT32(s, pointer->lengthXorMask); /* lengthXorMask (4 bytes) */
 
 	if (pointer->hotSpotX >= pointer->width)
 		pointer->hotSpotX = 0;
@@ -634,8 +640,8 @@ POINTER_NEW_UPDATE* update_read_pointer_new(rdpUpdate* update, wStream* s)
 		goto fail;
 	}
 
-	if (!_update_read_pointer_color(s, &pointer_new->colorPtrAttr,
-	                                pointer_new->xorBpp)) /* colorPtrAttr */
+	if (!_update_read_pointer_color(s, &pointer_new->colorPtrAttr, pointer_new->xorBpp,
+	                                update->context->settings->LargePointerFlag)) /* colorPtrAttr */
 		goto fail;
 
 	return pointer_new;
@@ -768,7 +774,7 @@ BOOL update_recv(rdpUpdate* update, wStream* s)
 	}
 
 	Stream_Read_UINT16(s, updateType); /* updateType (2 bytes) */
-	WLog_Print(update->log, WLOG_TRACE, "%s Update Data PDU", UPDATE_TYPE_STRINGS[updateType]);
+	WLog_Print(update->log, WLOG_TRACE, "%s Update Data PDU", update_type_to_string(updateType));
 
 	if (!update_begin_paint(update))
 		goto fail;
@@ -1081,7 +1087,7 @@ static int update_prepare_order_info(rdpContext* context, ORDER_INFO* orderInfo,
 	orderInfo->controlFlags = ORDER_STANDARD;
 	orderInfo->controlFlags |= ORDER_TYPE_CHANGE;
 	length += 1;
-	length += PRIMARY_DRAWING_ORDER_FIELD_BYTES[orderInfo->orderType];
+	length += get_primary_drawing_order_field_bytes(orderInfo->orderType, NULL);
 	length += update_prepare_bounds(context, orderInfo);
 	return length;
 }
@@ -1099,7 +1105,7 @@ static int update_write_order_info(rdpContext* context, wStream* s, ORDER_INFO* 
 		Stream_Write_UINT8(s, orderInfo->orderType); /* orderType (1 byte) */
 
 	update_write_field_flags(s, orderInfo->fieldFlags, orderInfo->controlFlags,
-	                         PRIMARY_DRAWING_ORDER_FIELD_BYTES[orderInfo->orderType]);
+	                         get_primary_drawing_order_field_bytes(orderInfo->orderType, NULL));
 	update_write_bounds(s, orderInfo);
 	Stream_SetPosition(s, position);
 	return 0;

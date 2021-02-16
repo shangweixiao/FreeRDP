@@ -128,6 +128,7 @@ static INLINE void shadow_client_free_queued_message(void* obj)
 
 static BOOL shadow_client_context_new(freerdp_peer* peer, rdpShadowClient* client)
 {
+	const char bind_address[] = "bind-address,";
 	rdpSettings* settings;
 	rdpShadowServer* server;
 	const wObject cb = { NULL, NULL, NULL, shadow_client_free_queued_message, NULL };
@@ -157,7 +158,8 @@ static BOOL shadow_client_context_new(freerdp_peer* peer, rdpShadowClient* clien
 	if (!(settings->RdpKeyFile = _strdup(settings->PrivateKeyFile)))
 		goto fail_rdpkey_file;
 
-	if (server->ipcSocket)
+	if (server->ipcSocket && (strncmp(bind_address, server->ipcSocket,
+	                                  strnlen(bind_address, sizeof(bind_address))) != 0))
 	{
 		settings->LyncRdpMode = TRUE;
 		settings->CompressionEnabled = FALSE;
@@ -925,11 +927,11 @@ static BOOL shadow_client_send_surface_bits(rdpShadowClient* client, BYTE* pSrcD
                                             int nXSrc, int nYSrc, int nWidth, int nHeight)
 {
 	BOOL ret = TRUE;
-	int i;
+	size_t i;
 	BOOL first;
 	BOOL last;
 	wStream* s;
-	int numMessages;
+	size_t numMessages;
 	UINT32 frameId = 0;
 	rdpUpdate* update;
 	rdpContext* context = (rdpContext*)client;
@@ -1329,12 +1331,12 @@ static BOOL shadow_client_send_surface_update(rdpShadowClient* client, SHADOW_GF
 	region16_copy(&invalidRegion, &(client->invalidRegion));
 	region16_clear(&(client->invalidRegion));
 	LeaveCriticalSection(&(client->lock));
+
+	EnterCriticalSection(&surface->lock);
 	rects = region16_rects(&(surface->invalidRegion), &numRects);
 
 	for (index = 0; index < numRects; index++)
-	{
 		region16_union_rect(&invalidRegion, &invalidRegion, &rects[index]);
-	}
 
 	surfaceRect.left = 0;
 	surfaceRect.top = 0;
@@ -1408,6 +1410,7 @@ static BOOL shadow_client_send_surface_update(rdpShadowClient* client, SHADOW_GF
 	}
 
 out:
+	LeaveCriticalSection(&surface->lock);
 	region16_uninit(&invalidRegion);
 	return ret;
 }
@@ -1995,7 +1998,7 @@ int shadow_client_boardcast_msg(rdpShadowServer* server, void* context, UINT32 t
 	wMessage message = { 0 };
 	rdpShadowClient* client = NULL;
 	int count = 0;
-	int index = 0;
+	size_t index = 0;
 	message.context = context;
 	message.id = type;
 	message.wParam = (void*)msg;
@@ -2026,7 +2029,7 @@ int shadow_client_boardcast_quit(rdpShadowServer* server, int nExitCode)
 {
 	wMessageQueue* queue = NULL;
 	int count = 0;
-	int index = 0;
+	size_t index = 0;
 	ArrayList_Lock(server->clients);
 
 	for (index = 0; index < ArrayList_Count(server->clients); index++)

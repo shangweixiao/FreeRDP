@@ -129,6 +129,8 @@ UINT rdpgfx_read_header(wStream* s, RDPGFX_HEADER* header)
  */
 UINT rdpgfx_write_header(wStream* s, const RDPGFX_HEADER* header)
 {
+	if (!Stream_EnsureRemainingCapacity(s, 8))
+		return ERROR_INTERNAL_ERROR;
 	Stream_Write_UINT16(s, header->cmdId);     /* cmdId (2 bytes) */
 	Stream_Write_UINT16(s, header->flags);     /* flags (2 bytes) */
 	Stream_Write_UINT32(s, header->pduLength); /* pduLength (4 bytes) */
@@ -182,6 +184,10 @@ UINT rdpgfx_read_rect16(wStream* s, RECTANGLE_16* rect16)
 	Stream_Read_UINT16(s, rect16->top);    /* top (2 bytes) */
 	Stream_Read_UINT16(s, rect16->right);  /* right (2 bytes) */
 	Stream_Read_UINT16(s, rect16->bottom); /* bottom (2 bytes) */
+	if (rect16->left >= rect16->right)
+		return ERROR_INVALID_DATA;
+	if (rect16->top >= rect16->bottom)
+		return ERROR_INVALID_DATA;
 	return CHANNEL_RC_OK;
 }
 

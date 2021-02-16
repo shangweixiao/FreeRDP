@@ -86,7 +86,7 @@ static IWTSVirtualChannel* get_channel(IUDEVMAN* idevman)
 static int func_container_id_generate(IUDEVICE* pdev, char* strContainerId)
 {
 	char *p, *path;
-	UINT8 containerId[17];
+	UINT8 containerId[17] = { 0 };
 	UINT16 idVendor, idProduct;
 	idVendor = (UINT16)pdev->query_device_descriptor(pdev, ID_VENDOR);
 	idProduct = (UINT16)pdev->query_device_descriptor(pdev, ID_PRODUCT);
@@ -97,7 +97,6 @@ static int func_container_id_generate(IUDEVICE* pdev, char* strContainerId)
 	else
 		p = path;
 
-	ZeroMemory(containerId, sizeof(containerId));
 	sprintf_s((char*)containerId, sizeof(containerId), "%04" PRIX16 "%04" PRIX16 "%s", idVendor,
 	          idProduct, p);
 	/* format */
@@ -114,7 +113,7 @@ static int func_container_id_generate(IUDEVICE* pdev, char* strContainerId)
 
 static int func_instance_id_generate(IUDEVICE* pdev, char* strInstanceId, size_t len)
 {
-	char instanceId[17];
+	char instanceId[17] = { 0 };
 	sprintf_s(instanceId, sizeof(instanceId), "\\%s", pdev->getPath(pdev));
 	/* format */
 	sprintf_s(strInstanceId, len,
@@ -265,7 +264,8 @@ static UINT urdbrc_send_usb_device_add(URBDRC_CHANNEL_CALLBACK* callback, IUDEVI
 		const UINT16 bcdDevice = (UINT16)pdev->query_device_descriptor(pdev, BCD_DEVICE);
 		sprintf_s(HardwareIds[1], DEVICE_HARDWARE_ID_SIZE,
 		          "USB\\VID_%04" PRIX16 "&PID_%04" PRIX16 "", idVendor, idProduct);
-		sprintf_s(HardwareIds[0], DEVICE_HARDWARE_ID_SIZE, "%s&REV_%04" PRIX16 "", HardwareIds[1],
+		sprintf_s(HardwareIds[0], DEVICE_HARDWARE_ID_SIZE,
+		          "USB\\VID_%04" PRIX16 "&PID_%04" PRIX16 "&REV_%04" PRIX16 "", idVendor, idProduct,
 		          bcdDevice);
 	}
 	{
@@ -277,18 +277,20 @@ static UINT urdbrc_send_usb_device_add(URBDRC_CHANNEL_CALLBACK* callback, IUDEVI
 		{
 			sprintf_s(CompatibilityIds[2], DEVICE_COMPATIBILITY_ID_SIZE, "USB\\Class_%02" PRIX8 "",
 			          bDeviceClass);
-			sprintf_s(CompatibilityIds[1], DEVICE_COMPATIBILITY_ID_SIZE, "%s&SubClass_%02" PRIX8 "",
-			          CompatibilityIds[2], bDeviceSubClass);
-			sprintf_s(CompatibilityIds[0], DEVICE_COMPATIBILITY_ID_SIZE, "%s&Prot_%02" PRIX8 "",
-			          CompatibilityIds[1], bDeviceProtocol);
+			sprintf_s(CompatibilityIds[1], DEVICE_COMPATIBILITY_ID_SIZE,
+			          "USB\\Class_%02" PRIX8 "&SubClass_%02" PRIX8 "", bDeviceClass,
+			          bDeviceSubClass);
+			sprintf_s(CompatibilityIds[0], DEVICE_COMPATIBILITY_ID_SIZE,
+			          "USB\\Class_%02" PRIX8 "&SubClass_%02" PRIX8 "&Prot_%02" PRIX8 "",
+			          bDeviceClass, bDeviceSubClass, bDeviceProtocol);
 		}
 		else
 		{
 			sprintf_s(CompatibilityIds[2], DEVICE_COMPATIBILITY_ID_SIZE, "USB\\DevClass_00");
-			sprintf_s(CompatibilityIds[1], DEVICE_COMPATIBILITY_ID_SIZE, "%s&SubClass_00",
-			          CompatibilityIds[2]);
-			sprintf_s(CompatibilityIds[0], DEVICE_COMPATIBILITY_ID_SIZE, "%s&Prot_00",
-			          CompatibilityIds[1]);
+			sprintf_s(CompatibilityIds[1], DEVICE_COMPATIBILITY_ID_SIZE,
+			          "USB\\DevClass_00&SubClass_00");
+			sprintf_s(CompatibilityIds[0], DEVICE_COMPATIBILITY_ID_SIZE,
+			          "USB\\DevClass_00&SubClass_00&Prot_00");
 		}
 	}
 	func_instance_id_generate(pdev, strInstanceId, DEVICE_INSTANCE_STR_SIZE);
@@ -619,6 +621,12 @@ static UINT urbdrc_on_close(IWTSVirtualChannelCallback* pChannelCallback)
 				UINT32 control = callback->channel_mgr->GetChannelId(callback->channel);
 				if (udevman->controlChannelId == control)
 					udevman->status |= URBDRC_DEVICE_CHANNEL_CLOSED;
+				else
+				{ /* Need to notify the local backend the device is gone */
+					IUDEVICE* pdev = udevman->get_udevice_by_ChannelID(udevman, control);
+					if (pdev)
+						pdev->markChannelClosed(pdev);
+				}
 			}
 		}
 	}
@@ -663,12 +671,20 @@ static UINT urbdrc_on_new_channel_connection(IWTSListenerCallback* pListenerCall
  */
 static UINT urbdrc_plugin_initialize(IWTSPlugin* pPlugin, IWTSVirtualChannelManager* pChannelMgr)
 {
+	UINT status;
 	URBDRC_PLUGIN* urbdrc = (URBDRC_PLUGIN*)pPlugin;
+	IUDEVMAN* udevman;
 	char channelName[sizeof(URBDRC_CHANNEL_NAME)] = { URBDRC_CHANNEL_NAME };
 
-	if (!urbdrc)
+	if (!urbdrc || !urbdrc->udevman)
 		return ERROR_INVALID_PARAMETER;
 
+	if (urbdrc->initialized)
+	{
+		WLog_ERR(TAG, "[%s] channel initialized twice, aborting", URBDRC_CHANNEL_NAME);
+		return ERROR_INVALID_DATA;
+	}
+	udevman = urbdrc->udevman;
 	urbdrc->listener_callback =
 	    (URBDRC_LISTENER_CALLBACK*)calloc(1, sizeof(URBDRC_LISTENER_CALLBACK));
 
@@ -681,8 +697,17 @@ static UINT urbdrc_plugin_initialize(IWTSPlugin* pPlugin, IWTSVirtualChannelMana
 
 	/* [MS-RDPEUSB] 2.1 Transport defines the channel name in uppercase letters */
 	CharUpperA(channelName);
-	return pChannelMgr->CreateListener(pChannelMgr, channelName, 0,
-	                                   &urbdrc->listener_callback->iface, NULL);
+	status = pChannelMgr->CreateListener(pChannelMgr, channelName, 0,
+	                                     &urbdrc->listener_callback->iface, &urbdrc->listener);
+	if (status != CHANNEL_RC_OK)
+		return status;
+
+	status = CHANNEL_RC_OK;
+	if (udevman->listener_created_callback)
+		status = udevman->listener_created_callback(udevman);
+
+	urbdrc->initialized = status == CHANNEL_RC_OK;
+	return status;
 }
 
 /**
@@ -697,7 +722,12 @@ static UINT urbdrc_plugin_terminated(IWTSPlugin* pPlugin)
 
 	if (!urbdrc)
 		return ERROR_INVALID_DATA;
-
+	if (urbdrc->listener_callback)
+	{
+		IWTSVirtualChannelManager* mgr = urbdrc->listener_callback->channel_mgr;
+		if (mgr)
+			IFCALL(mgr->DestroyListener, mgr, urbdrc->listener);
+	}
 	udevman = urbdrc->udevman;
 
 	if (udevman)

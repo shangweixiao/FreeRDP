@@ -93,6 +93,7 @@ static BOOL gdi_Bitmap_New(rdpContext* context, rdpBitmap* bitmap)
 	if (!gdi_bitmap->bitmap)
 	{
 		gdi_DeleteDC(gdi_bitmap->hdc);
+		gdi_bitmap->hdc = NULL;
 		return FALSE;
 	}
 
@@ -161,6 +162,8 @@ static BOOL gdi_Bitmap_Decompress(rdpContext* context, rdpBitmap* bitmap, const 
 		}
 		else
 		{
+			freerdp_planar_switch_bgr(context->codecs->planar,
+			                          context->settings->DrawAllowDynamicColorFidelity);
 			if (!planar_decompress(context->codecs->planar, pSrcData, SrcSize, DstWidth, DstHeight,
 			                       bitmap->data, bitmap->format, 0, 0, 0, DstWidth, DstHeight,
 			                       TRUE))

@@ -34,7 +34,7 @@
 
 #define TAG FREERDP_TAG("core.rdp")
 
-const char* DATA_PDU_TYPE_STRINGS[80] = {
+static const char* DATA_PDU_TYPE_STRINGS[80] = {
 	"?",
 	"?",      /* 0x00 - 0x01 */
 	"Update", /* 0x02 */
@@ -102,10 +102,17 @@ const char* DATA_PDU_TYPE_STRINGS[80] = {
 	"?" /* 0x41 - 0x46 */
 };
 
+const char* data_pdu_type_to_string(UINT8 type)
+{
+	if (type >= ARRAYSIZE(DATA_PDU_TYPE_STRINGS))
+		return "???";
+	return DATA_PDU_TYPE_STRINGS[type];
+}
+
 static BOOL rdp_read_flow_control_pdu(wStream* s, UINT16* type, UINT16* channel_id);
-static void rdp_write_share_control_header(wStream* s, UINT16 length, UINT16 type,
+static BOOL rdp_write_share_control_header(wStream* s, UINT16 length, UINT16 type,
                                            UINT16 channel_id);
-static void rdp_write_share_data_header(wStream* s, UINT16 length, BYTE type, UINT32 share_id);
+static BOOL rdp_write_share_data_header(wStream* s, UINT16 length, BYTE type, UINT32 share_id);
 
 /**
  * Read RDP Security Header.\n
@@ -167,7 +174,7 @@ BOOL rdp_read_share_control_header(wStream* s, UINT16* tpktLength, UINT16* remai
 		return TRUE;
 	}
 
-	if ((len < 4) || ((len - 2) > Stream_GetRemainingLength(s)))
+	if ((len < 4U) || ((len - 2U) > Stream_GetRemainingLength(s)))
 		return FALSE;
 
 	if (tpktLength)
@@ -192,13 +199,18 @@ BOOL rdp_read_share_control_header(wStream* s, UINT16* tpktLength, UINT16* remai
 	return TRUE;
 }
 
-void rdp_write_share_control_header(wStream* s, UINT16 length, UINT16 type, UINT16 channel_id)
+BOOL rdp_write_share_control_header(wStream* s, UINT16 length, UINT16 type, UINT16 channel_id)
 {
+	if (length < RDP_PACKET_HEADER_MAX_LENGTH)
+		return FALSE;
+	if (Stream_GetRemainingCapacity(s) < 6)
+		return FALSE;
 	length -= RDP_PACKET_HEADER_MAX_LENGTH;
 	/* Share Control Header */
 	Stream_Write_UINT16(s, length);      /* totalLength */
 	Stream_Write_UINT16(s, type | 0x10); /* pduType */
 	Stream_Write_UINT16(s, channel_id);  /* pduSource */
+	return TRUE;
 }
 
 BOOL rdp_read_share_data_header(wStream* s, UINT16* length, BYTE* type, UINT32* shareId,
@@ -218,11 +230,16 @@ BOOL rdp_read_share_data_header(wStream* s, UINT16* length, BYTE* type, UINT32* 
 	return TRUE;
 }
 
-void rdp_write_share_data_header(wStream* s, UINT16 length, BYTE type, UINT32 share_id)
+BOOL rdp_write_share_data_header(wStream* s, UINT16 length, BYTE type, UINT32 share_id)
 {
-	length -= RDP_PACKET_HEADER_MAX_LENGTH;
-	length -= RDP_SHARE_CONTROL_HEADER_LENGTH;
-	length -= RDP_SHARE_DATA_HEADER_LENGTH;
+	const size_t headerLen = RDP_PACKET_HEADER_MAX_LENGTH + RDP_SHARE_CONTROL_HEADER_LENGTH +
+	                         RDP_SHARE_DATA_HEADER_LENGTH;
+	if (length < headerLen)
+		return FALSE;
+	length -= headerLen;
+	if (Stream_GetRemainingCapacity(s) < 12)
+		return FALSE;
+
 	/* Share Data Header */
 	Stream_Write_UINT32(s, share_id);  /* shareId (4 bytes) */
 	Stream_Write_UINT8(s, 0);          /* pad1 (1 byte) */
@@ -231,6 +248,7 @@ void rdp_write_share_data_header(wStream* s, UINT16 length, BYTE type, UINT32 sh
 	Stream_Write_UINT8(s, type);       /* pduType2, Data PDU Type (1 byte) */
 	Stream_Write_UINT8(s, 0);          /* compressedType (1 byte) */
 	Stream_Write_UINT16(s, 0);         /* compressedLength (2 bytes) */
+	return TRUE;
 }
 
 static BOOL rdp_security_stream_init(rdpRdp* rdp, wStream* s, BOOL sec_header)
@@ -385,6 +403,7 @@ BOOL rdp_read_header(rdpRdp* rdp, wStream* s, UINT16* length, UINT16* channelId)
 	MCSPDU = (rdp->settings->ServerMode) ? DomainMCSPDU_SendDataRequest
 	                                     : DomainMCSPDU_SendDataIndication;
 
+	*channelId = 0; /* Initialize in case of early abort */
 	if (!tpkt_read_header(s, length))
 		return FALSE;
 
@@ -661,7 +680,8 @@ BOOL rdp_send_pdu(rdpRdp* rdp, wStream* s, UINT16 type, UINT16 channel_id)
 	sec_bytes = rdp_get_sec_bytes(rdp, 0);
 	sec_hold = Stream_GetPosition(s);
 	Stream_Seek(s, sec_bytes);
-	rdp_write_share_control_header(s, length - sec_bytes, type, channel_id);
+	if (!rdp_write_share_control_header(s, length - sec_bytes, type, channel_id))
+		return FALSE;
 	Stream_SetPosition(s, sec_hold);
 
 	if (!rdp_security_stream_out(rdp, s, length, 0, &pad))
@@ -697,8 +717,10 @@ BOOL rdp_send_data_pdu(rdpRdp* rdp, wStream* s, BYTE type, UINT16 channel_id)
 	sec_bytes = rdp_get_sec_bytes(rdp, 0);
 	sec_hold = Stream_GetPosition(s);
 	Stream_Seek(s, sec_bytes);
-	rdp_write_share_control_header(s, length - sec_bytes, PDU_TYPE_DATA, channel_id);
-	rdp_write_share_data_header(s, length - sec_bytes, type, rdp->settings->ShareId);
+	if (!rdp_write_share_control_header(s, length - sec_bytes, PDU_TYPE_DATA, channel_id))
+		goto fail;
+	if (!rdp_write_share_data_header(s, length - sec_bytes, type, rdp->settings->ShareId))
+		goto fail;
 	Stream_SetPosition(s, sec_hold);
 
 	if (!rdp_security_stream_out(rdp, s, length, 0, &pad))
@@ -919,8 +941,7 @@ int rdp_recv_data_pdu(rdpRdp* rdp, wStream* s)
 	}
 
 	WLog_DBG(TAG, "recv %s Data PDU (0x%02" PRIX8 "), length: %" PRIu16 "",
-	         type < ARRAYSIZE(DATA_PDU_TYPE_STRINGS) ? DATA_PDU_TYPE_STRINGS[type] : "???", type,
-	         length);
+	         data_pdu_type_to_string(type), type, length);
 
 	switch (type)
 	{
@@ -1249,7 +1270,7 @@ BOOL rdp_decrypt(rdpRdp* rdp, wStream* s, UINT16* pLength, UINT16 securityFlags)
 	return TRUE;
 }
 
-static const char* pdu_type_to_str(UINT16 pduType)
+const char* pdu_type_to_str(UINT16 pduType)
 {
 	static char buffer[1024] = { 0 };
 	switch (pduType)
@@ -1627,12 +1648,7 @@ int rdp_recv_callback(rdpTransport* transport, wStream* s, void* extra)
 
 			if ((status >= 0) && (rdp->finalize_sc_pdus == FINALIZE_SC_COMPLETE))
 			{
-				ActivatedEventArgs activatedEvent;
-				rdpContext* context = rdp->context;
 				rdp_client_transition_to_state(rdp, CONNECTION_STATE_ACTIVE);
-				EventArgsInit(&activatedEvent, "libfreerdp");
-				activatedEvent.firstActivation = !rdp->deactivation_reactivation;
-				PubSub_OnActivated(context->pubSub, context, &activatedEvent);
 				return 2;
 			}
 
@@ -1750,6 +1766,7 @@ rdpRdp* rdp_new(rdpContext* context)
 	if (!rdp)
 		return NULL;
 
+	InitializeCriticalSection(&rdp->critical);
 	rdp->context = context;
 	rdp->instance = context->instance;
 	flags = 0;
@@ -1762,7 +1779,7 @@ rdpRdp* rdp_new(rdpContext* context)
 		context->settings = freerdp_settings_new(flags);
 
 		if (!context->settings)
-			goto out_free;
+			goto fail;
 
 		newSettings = TRUE;
 	}
@@ -1783,93 +1800,73 @@ rdpRdp* rdp_new(rdpContext* context)
 	rdp->transport = transport_new(context);
 
 	if (!rdp->transport)
-		goto out_free_settings;
+		goto fail;
+
+	if (rdp->io && rdp->transport)
+	{
+		if (!transport_set_io_callbacks(rdp->transport, rdp->io))
+			goto fail;
+	}
 
 	rdp->license = license_new(rdp);
 
 	if (!rdp->license)
-		goto out_free_transport;
+		goto fail;
 
 	rdp->input = input_new(rdp);
 
 	if (!rdp->input)
-		goto out_free_license;
+		goto fail;
 
 	rdp->update = update_new(rdp);
 
 	if (!rdp->update)
-		goto out_free_input;
+		goto fail;
 
 	rdp->fastpath = fastpath_new(rdp);
 
 	if (!rdp->fastpath)
-		goto out_free_update;
+		goto fail;
 
 	rdp->nego = nego_new(rdp->transport);
 
 	if (!rdp->nego)
-		goto out_free_fastpath;
+		goto fail;
 
 	rdp->mcs = mcs_new(rdp->transport);
 
 	if (!rdp->mcs)
-		goto out_free_nego;
+		goto fail;
 
 	rdp->redirection = redirection_new();
 
 	if (!rdp->redirection)
-		goto out_free_mcs;
+		goto fail;
 
 	rdp->autodetect = autodetect_new();
 
 	if (!rdp->autodetect)
-		goto out_free_redirection;
+		goto fail;
 
 	rdp->heartbeat = heartbeat_new();
 
 	if (!rdp->heartbeat)
-		goto out_free_autodetect;
+		goto fail;
 
 	rdp->multitransport = multitransport_new();
 
 	if (!rdp->multitransport)
-		goto out_free_heartbeat;
+		goto fail;
 
 	rdp->bulk = bulk_new(context);
 
 	if (!rdp->bulk)
-		goto out_free_multitransport;
+		goto fail;
 
 	return rdp;
-out_free_multitransport:
-	multitransport_free(rdp->multitransport);
-out_free_heartbeat:
-	heartbeat_free(rdp->heartbeat);
-out_free_autodetect:
-	autodetect_free(rdp->autodetect);
-out_free_redirection:
-	redirection_free(rdp->redirection);
-out_free_mcs:
-	mcs_free(rdp->mcs);
-out_free_nego:
-	nego_free(rdp->nego);
-out_free_fastpath:
-	fastpath_free(rdp->fastpath);
-out_free_update:
-	update_free(rdp->update);
-out_free_input:
-	input_free(rdp->input);
-out_free_license:
-	license_free(rdp->license);
-out_free_transport:
-	transport_free(rdp->transport);
-out_free_settings:
 
-	if (newSettings)
-		freerdp_settings_free(rdp->settings);
-
-out_free:
-	free(rdp);
+fail:
+	rdp_free(rdp);
 	return NULL;
 }
 
@@ -1930,6 +1927,8 @@ void rdp_reset(rdpRdp* rdp)
 	transport_free(rdp->transport);
 	fastpath_free(rdp->fastpath);
 	rdp->transport = transport_new(context);
+	if (rdp->io && rdp->transport)
+		transport_set_io_callbacks(rdp->transport, rdp->io);
 	rdp->license = license_new(rdp);
 	rdp->nego = nego_new(rdp->transport);
 	rdp->mcs = mcs_new(rdp->transport);
@@ -1949,6 +1948,7 @@ void rdp_free(rdpRdp* rdp)
 {
 	if (rdp)
 	{
+		DeleteCriticalSection(&rdp->critical);
 		winpr_RC4_Free(rdp->rc4_decrypt_key);
 		winpr_RC4_Free(rdp->rc4_encrypt_key);
 		winpr_Cipher_Free(rdp->fips_encrypt);
@@ -1967,6 +1967,30 @@ void rdp_free(rdpRdp* rdp)
 		heartbeat_free(rdp->heartbeat);
 		multitransport_free(rdp->multitransport);
 		bulk_free(rdp->bulk);
+		free(rdp->io);
 		free(rdp);
 	}
+}
+
+const rdpTransportIo* rdp_get_io_callbacks(rdpRdp* rdp)
+{
+	if (!rdp)
+		return NULL;
+	return rdp->io;
+}
+
+BOOL rdp_set_io_callbacks(rdpRdp* rdp, const rdpTransportIo* io_callbacks)
+{
+	if (!rdp)
+		return FALSE;
+	free(rdp->io);
+	rdp->io = NULL;
+	if (io_callbacks)
+	{
+		rdp->io = malloc(sizeof(rdpTransportIo));
+		if (!rdp->io)
+			return FALSE;
+		*rdp->io = *io_callbacks;
+	}
+	return TRUE;
 }

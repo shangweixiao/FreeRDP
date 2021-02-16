@@ -17,8 +17,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include "urbdrc_helpers.h"
 #include "urbdrc_types.h"
+#include <winpr/print.h>
 
 const char* mask_to_string(UINT32 mask)
 {
@@ -386,7 +391,7 @@ void urbdrc_dump_message(wLog* log, BOOL client, BOOL write, wStream* s)
 	pos = Stream_GetPosition(s);
 	if (write)
 	{
-		length = Stream_GetPosition(s);
+		length = pos;
 		Stream_SetPosition(s, 0);
 	}
 	else
@@ -402,7 +407,15 @@ void urbdrc_dump_message(wLog* log, BOOL client, BOOL write, wStream* s)
 
 	WLog_Print(log, WLOG_DEBUG,
 	           "[%-5s] %s [%08" PRIx32 "] InterfaceId=%08" PRIx32 ", MessageId=%08" PRIx32
-	           ", FunctionId=%08" PRIx32 ", length=%" PRIdz,
+	           ", FunctionId=%08" PRIx32 ", length=%" PRIuz,
 	           type, call_to_string(client, InterfaceId, FunctionId), FunctionId, InterfaceId,
 	           MessageId, FunctionId, length);
+#if defined(WITH_DEBUG_URBDRC)
+	if (write)
+		WLog_Print(log, WLOG_TRACE, "-------------------------- URBDRC sent: ---");
+	else
+		WLog_Print(log, WLOG_TRACE, "-------------------------- URBDRC received:");
+	winpr_HexLogDump(log, WLOG_TRACE, Stream_Buffer(s), length);
+	WLog_Print(log, WLOG_TRACE, "-------------------------- URBDRC end -----");
+#endif
 }
